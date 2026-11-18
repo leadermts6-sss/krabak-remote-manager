@@ -222,6 +222,14 @@ async function connectWebSocket(cookie = null) {
   return socket;
 }
 
+test('status returns the current account only for its valid session without requiring a failed /me request', async () => {
+  const anonymous = await api('/api/status');
+  assert.equal(anonymous.status, 200);
+  assert.equal(anonymous.payload.user, null);
+  const authenticated = await api('/api/status', { cookie: adminCookie });
+  assert.deepEqual(authenticated.payload.user, { email: adminEmail, role: 'admin' });
+});
+
 test('admin login remains compatible, role is explicit, and logout invalidates the session', { timeout: 20000 }, async () => {
   const cookie = await login(adminEmail, adminPassword);
   const me = await api('/api/me', { cookie });
@@ -256,6 +264,17 @@ test('activation is one-time, does not create a session, and teachers can sign i
   assert.deepEqual((await api('/api/me', { cookie })).payload.user, { email, role: 'teacher' });
   assert.equal((await api('/api/logout', { method: 'POST', cookie, body: {} })).status, 200);
   assert.equal((await api('/api/me', { cookie })).status, 401);
+});
+
+test('admin can issue a replacement activation code for a pending teacher', { timeout: 20000 }, async () => {
+  const email = 'teacher.pending-reset@example.edu';
+  const original = await createPending(email);
+  const listed = await api('/api/users', { cookie: adminCookie });
+  const user = listed.payload.users.find(item => item.email === email);
+  const renewed = await api('/api/users/' + user.id + '/activation', { method: 'POST', cookie: adminCookie, body: {} });
+  assert.equal(renewed.status, 200);
+  assert.equal((await activate(email, original.activationCode, 'TeacherPassword123')).status, 400);
+  assert.equal((await activate(email, renewed.payload.activationCode, 'TeacherPassword123')).status, 200);
 });
 
 test('activation errors are generic for unknown email, wrong code, and expired code', { timeout: 20000 }, async () => {

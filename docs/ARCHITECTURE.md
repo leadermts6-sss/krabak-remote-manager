@@ -1,54 +1,44 @@
-# โครงสร้างระบบ KRABAK Remote Manager
-
-## MVP ที่อยู่ใน ZIP
+# โครงสร้าง KRABAK Remote Manager
 
 ```text
-Windows / Chrome-Edge Host (ผู้แชร์)
-  └─ getDisplayMedia() (หน้าต่าง/จอ/แท็บที่ผู้ใช้กดยอมรับ)
-     └── WebRTC SRTP video ────────────────> Viewer Web / PWA
-        │                                    ▲
-        └── WebRTC DataChannel (files) ──────┘
-
-          │           REST + WSS            ▲
-          ▼                                 │
-   Nginx HTTPS (aaPanel)                    │
-          │                                 │
-          ▼                                 │
-  Serva VPS / Node Backend (:8787 localhost)
-   - Admin login/session cookie
-   - Host pairing code (8 hex chars, 15 min)
-   - Consent-based session request
-   - WebRTC SDP/ICE signaling via WS
-   - Message relay / limited audit
-   - Serve dist/ built PWA
-
-STUN (public test) / TURN (recommended for production)
+Admin / Teacher browser
+  ├─ Login / one-time teacher activation
+  ├─ Role-scoped active Host list and audit
+  └─ Viewer: request by temporary pairing code
+       │ REST + WSS over HTTPS
+       ▼
+Nginx reverse proxy
+       │ localhost only
+       ▼
+Node Backend :8787
+  ├─ Admin and teacher auth, role checks
+  ├─ Teacher accounts file outside web root (0700/0600)
+  ├─ Temporary Host registrations and pairing codes
+  ├─ Session/consent and WebSocket signaling
+  └─ Static PWA files
+       │ WebRTC DTLS-SRTP
+       ▼
+Host browser: visible request popup + user approval + browser source picker
 ```
 
-Host รับคำขอผ่าน WebSocket, คนที่อยู่หน้าเครื่อง Host ต้องกดอนุญาตและเลือกแหล่งแชร์ด้วยตัวเอง เว็บจะไม่มีสิทธิ์เลือกหน้าต่างล่วงหน้าหรือส่งคลิกเมาส์เข้า OS
+Host อยู่ในระบบและเชื่อม WebSocket ขณะรอคำขอได้ แม้ผู้ใช้กำลังดูหน้าอื่นของเว็บแอป เมื่อคำขอเข้ามา UI แสดงกล่องอนุญาตกลางหน้าจอ ปุ่มอนุญาตต้องมาจากการกดของผู้ใช้และจึงเรียก `getDisplayMedia()` เพื่อเปิด Browser picker การอนุญาตเว็บครั้งก่อนจะไม่ถูกใช้แทนการยืนยันนี้
 
-## ขั้นขยายเพื่อควบคุม Windows จริง
+## Windows Agent ระยะถัดไป
 
-ต้องพัฒนา **Windows Agent ที่ติดตั้งและได้รับสิทธิ์โดยเจ้าของเครื่อง** (แยก process/service ตามหลัก Windows privilege)
+การควบคุม Windows จริงต้องพัฒนา Agent ที่ผู้ใช้ติดตั้งและอนุญาตโดยชัดเจน:
 
-1. **Discovery:** `EnumDisplayMonitors`, `EnumWindows`, process list แบบ allowlist; ส่ง metadata ของจอและแอปที่ผู้ใช้อนุญาตเท่านั้น หลีกเลี่ยงการแสดงชื่อหน้าต่างที่อาจมีข้อมูลส่วนบุคคลแก่คนที่ไม่ได้รับสิทธิ์
-2. **Capture:** Windows Graphics Capture (`GraphicsCaptureItem`) / DXGI Desktop Duplication / Media Foundation encode; ภาพเฉพาะ window, เฉพาะ monitor และหลาย track ที่สลับได้ แยกคิวบัฟเฟอร์/บิทเรต และรองรับ GPU encoding ถ้ามี
-3. **Transport:** WebRTC (DTLS-SRTP) + STUN/TURN; per-session authorization; use TLS WSS signaling; ไม่ส่ง raw framebuffer ผ่าน HTTP public
-4. **Input:** คำสั่งเมาส์/คีย์บอร์ดเข้ารหัส ตรวจสิทธิ์ **per app/per monitor** และสิทธิ์ window focus; Windows `SendInput`/native APIs ทำได้เฉพาะตามสิทธิ์ OS, UAC Secure Desktop และ protected app ไม่ควรถูกข้ามหรือหลบเลี่ยง
-5. **Permissions:** ผู้ใช้กด consent / optional unattended ที่ตั้งค่าไว้ล่วงหน้าแบบจำกัดเครื่อง บทบาท ช่วงเวลา พร้อมปุ่ม Pause/Stop ที่แสดงบนจอและ kill switch
-6. **Clipboard:** ส่งข้อความสองทิศทางโดยต้องมี opt-in; จำกัดประเภทและขนาดข้อมูล; บน mobile การอ่านคลิปบอร์ดอัตโนมัติไม่ได้เสมอไป
-7. **File transfer:** ตั้ง directory allowlist, ตรวจชื่อไฟล์/ขนาด และรับไฟล์พร้อมอนุญาตก่อนบันทึก
-8. **Multi-monitor UX:** แสดงหน้าจอแบบ tabs/tiles/แยกหน้าต่าง browser (เมื่อรองรับ), สลับ monitor ในเซสชันเดียว, เฉพาะหน้าต่างแอปโดยมี overlay ตำแหน่งและสัดส่วนที่ถูกต้อง
-9. **Operations:** ติดตั้ง EXE/installer Windows ที่ signed, auto-start ที่ผู้ใช้เลือก, auto-update ที่ตรวจลายเซ็น, การถอนติดตั้งและเพิกถอน device key
+1. .NET 8 Windows Agent โดยใช้ Windows Graphics Capture สำหรับเลือก Window/Monitor จริง
+2. ส่งภาพผ่าน WebRTC พร้อมสลับจอและหลาย track; จัดการ ICE/TURN สำหรับ NAT
+3. input mouse/keyboard ผ่าน OS API โดย consent ต่อ session, policy แบบจำกัด และปุ่มหยุดบนเครื่อง
+4. Clipboard แบบสองทิศทางที่ opt-in; file transfer ผ่าน directory allowlist และ confirmation
+5. Device identity, revocation, audit, MFA/RBAC และ Windows auto-start ที่ผู้ใช้ตั้งค่าเอง
+6. Installer/EXE signed และ updater ตรวจลายเซ็น พร้อม uninstall/revoke ที่ตรวจสอบได้
 
-## ข้อจำกัดสำคัญที่ต้องแจ้ง Codex
+**ห้ามอ้างว่า Browser Share ควบคุมเมาส์หรือคีย์บอร์ด Windows ได้** Browser API อนุญาตเฉพาะการ capture ที่ผู้ใช้เลือก
 
-- `getDisplayMedia()` ไม่อนุญาตให้เว็บไซต์บังคับเลือกหน้าต่างแทนผู้ใช้ ต้องมี browser picker ทุกครั้ง
-- Browser PWA โดยลำพังไม่มี native remote-input/OS-inventory APIs
-- aaPanel เป็นเครื่องมือจัดการ VPS ไม่ใช่ remote desktop engine
-- Vite ใช้สร้าง frontend; Node backend แยกบริการ แม้เสิร์ฟไฟล์ dist จาก Node ตัวเดียวกันในการทดลอง
-- TLS, TURN, device identity, consent, RBAC, key lifecycle ต้องผ่าน security review ก่อนใช้งานจริง
+## Production และ deployment
 
-## โดเมน
-
-ตัวอย่าง `remote.krabak.ac.th` เป็น **ข้อเสนอชื่อโดเมน ยังไม่ได้ตั้ง DNS จริง**. ให้ Codex ตรวจสอบโครงสร้าง DNS / aaPanel ก่อนเปลี่ยนแปลง โดยไม่กระทบ `krabak.ac.th`, `school.krabak.ac.th`, `student.krabak.ac.th`
+- GitHub Actions ทดสอบและ build ก่อนสร้าง release artifact
+- Deploy เข้า Serva ผ่าน `main` เมื่อเปิด `PRODUCTION_DEPLOY_ENABLED` และใช้ dedicated SSH receiver/key
+- ควรตรวจ URL `remote.krabak.ac.th`, TLS, Nginx, UFW และ systemd ด้วย health check ก่อนอ้างว่า deploy สำเร็จ
+- พอร์ต 8787 ต้องรับเฉพาะ localhost; SSH host key ต้องเทียบกับ fingerprint ที่ pin ไว้

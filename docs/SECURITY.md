@@ -1,45 +1,38 @@
-# Security notes — read before opening to the Internet
+# บันทึกความปลอดภัย — KRABAK Remote Manager
 
-## What is implemented
+## สิ่งที่ทำงานใน source ปัจจุบัน
 
-- Single admin login with scrypt hashing and random salt; secure HttpOnly SameSite Strict cookie (Secure when HTTPS proxy reports HTTPS)
-- Session token random 256 bits; in-memory, expires in 8 hours idle
-- Origin checked on POST/WS; bounded JSON/WS messages; login/host registration rate limits
-- Host registration requires 8-char random pairing code, expires after ~15 minutes; host must confirm every browser share
-- Viewer can only access session whose admin account issued the request; host can end or reject
-- WebRTC DTLS-SRTP media; WebRTC DataChannel for files; no media file storage by backend
-- Backend defaults to localhost port 8787. **Do not expose port 8787 publicly**
-- No default admin account/password
-- Source does not include user credentials or private keys
+- บัญชี Admin เดิมใช้ scrypt, random salt และ session cookie HttpOnly/SameSite Strict; `Secure` ใช้เมื่อเชื่อถือ HTTPS proxy
+- บัญชีครูถูกสร้างโดย Admin เท่านั้น ใช้ activation code สุ่มแบบใช้ครั้งเดียว อายุ 24 ชั่วโมง; เก็บ digest ของ code ไม่เก็บ code หลังส่งผลตอบกลับ
+- Admin ออกรหัสใหม่ให้บัญชีที่ยังรอเปิดใช้หรือบัญชีที่เปิดใช้แล้วได้; รหัสเดิมใช้ไม่ได้และบัญชีที่ถูกรีเซ็ตต้องตั้งรหัสผ่านใหม่
+- รหัสผ่านครูใช้ scrypt และต้องเป็นอักษรอังกฤษกับตัวเลข 12–128 ตัว
+- รายการบัญชีครูเก็บนอก web root ด้วย directory/file permissions `0700`/`0600`; ห้ามนำไฟล์ข้อมูลขึ้น repo หรือ artifact
+- สิทธิ์ Admin/Teacher ตรวจที่ API; รายการ Host และ audit จำกัดตามเจ้าของบัญชี
+- ปิด/ออก activation code ใหม่จะเพิกถอน session, WebSocket, Host และเซสชันที่เกี่ยวข้อง
+- Host ต้องอนุมัติคำขอและเลือกแหล่งแชร์จาก Browser picker ทุกครั้ง
+- WebRTC ใช้ DTLS-SRTP และ DataChannel; backend ไม่เก็บไฟล์หรือ media
+- Backend ค่าเริ่มต้น bind `127.0.0.1:8787`; ห้ามเปิดพอร์ตนี้สู่สาธารณะ
+- GitHub Actions ใช้ deploy-only key/receiver, pinned Serva host-key fingerprint และ SSH แบบ `BatchMode`/`StrictHostKeyChecking`
 
-## NOT yet production-ready for unattended remote administration
+## ข้อจำกัด
 
-- No MFA/RBAC/per-device ACL, no durable device identity, no per-user audit retention, no distributed session store
-- Same-IP brute-force rate limiting is in-memory; use WAF/reverse-proxy rate limits and fail2ban policy
-- No separate Windows EXE/Agent for true OS input control. The web demo must never be misrepresented as an installed remote desktop service
-- No OS clipboard integration; no host file-system access
-- No load balancing or HA; one Node process, sessions lost on restart
-- WebSocket protocol supports small JSON frames only, not binary/continuations. Bulk files intentionally use RTC DataChannel
-- Stun-only cross-network connections can fail. Configure `coturn` for TURN before large-scale use
-- For TURN, use `KRABAK_TURN_SECRET` with coturn `use-auth-secret` and time-limited credentials, **not long-lived static password exposed in public /api/status**
-- Browser screen capture requires HTTPS and active user gesture; never bypass permission prompts
-- Be careful with secure desktop/UAC/credential prompts; do not implement bypasses
+- ไม่มี MFA, persistent session store, durable Host identity หรือ per-device policy
+- Sessions, Hosts ที่ออนไลน์ และ audit เก็บในหน่วยความจำ; restart ทำให้ข้อมูลชั่วคราวเหล่านี้หมดอายุ
+- rate limiting เป็น in-memory; ควรจำกัดที่ reverse proxy และเฝ้าระวังความผิดปกติ
+- ไม่มี Windows Agent, OS input, clipboard integration หรือ unattended access
+- STUN-only อาจใช้ไม่ได้หลัง NAT บางชนิด; production อาจต้องมี coturn พร้อม ephemeral credentials
+- Browser screen capture ต้องเกิดจาก gesture ของผู้ใช้และยืนยัน source ผ่าน Browser picker; ห้ามหลบ prompt
 
-## Checklist before production
+## ก่อนเพิ่มผู้ใช้หรือเปิดความสามารถใหม่
 
-1. Create a new dedicated domain; enable valid HTTPS with aaPanel's SSL and HTTP→HTTPS redirect
-2. Create unprivileged Linux user; store `.local-data` outside web root; protect with `0700` and `0600`
-3. Set systemd environment including `KRABAK_PUBLIC_ORIGIN` and `KRABAK_TRUST_PROXY=1`, pin Node LTS
-4. Run threat modeling, penetration testing, code audit, and dependency updates
-5. Add MFA, per-device grants, admin and device revocation, short access tokens, persistent Postgres/MariaDB for audit
-6. Run TURN with network egress limits/quotas and rotate shared secret; block abuse
-7. Add stricter frontend CSP after removing inline style attributes and dynamic styles; use SRI for any external libraries
-8. Add consent banner and visible disclosure on every connected Windows device
-9. Add backup of admin config, database, audit, restore drills; avoid storing password in scripts
-10. Restrict panel/admin endpoints via VPN or IP allowlist; aaPanel port 21537 remains separate
-11. Configure log retention, error alerts and outage detection without logging device secrets/session codes
-12. If deploying Agent, signed builds, user permission, per-app grants, uninstall, update signature validation
+1. ทบทวน threat model และทำ security review / penetration test
+2. เพิ่ม MFA, policy ต่ออุปกรณ์, การเพิกถอนและ audit แบบเก็บถาวร
+3. ตั้ง backup และทดสอบ restore สำหรับข้อมูลผู้ใช้และ credential โดยห้ามเก็บสำเนาใน web root
+4. ตั้ง TURN ด้วย time-limited credentials, quotas และข้อจำกัด egress
+5. ใช้ CSP เข้มงวดหลังนำ inline styles/scripts ออก
+6. จำกัดหน้า admin ของระบบอื่นแยกจากเว็บแอป; ไม่เปิด aaPanel หรือ backend port โดยไม่จำเป็น
+7. Windows Agent ต้องลงนาม binary, ตรวจ signature ใน updater, มี consent ที่เห็นชัด, allowlist, revocation และปุ่ม Stop
 
 ## Threat model
 
-A pairing code is a temporary invitation, not a permanent device identity; anyone who learns the code *and* has admin login can issue a request, but Host must approve and choose a source. Do not implement unattended access by disabling consent. Avoid recording or monitoring users without their knowledge.
+รหัสจับคู่ชั่วคราวเป็นคำเชิญ ไม่ใช่ identity ถาวร ผู้ใช้ที่ล็อกอินและรู้รหัสสามารถส่งคำขอได้ แต่ Host ยังต้องอนุญาตและเลือกแหล่งภาพเอง ทุกหน้าเว็บต้องเปิดเผยว่าการแชร์เกิดขึ้นอยู่ ห้ามอ้างว่าเว็บควบคุม Windows ได้ก่อนมี Agent ที่ผ่านการตรวจสอบ

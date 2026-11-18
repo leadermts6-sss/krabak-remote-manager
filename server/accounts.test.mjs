@@ -123,6 +123,16 @@ test('reissue invalidates old activation, clears prior access, and accepts the n
   assert.equal(accounts.verifyTeacherPassword('TeacherReset456', accounts.getTeacherForAuth('reset@example.edu')), true);
 });
 
+test('pending teacher activation can be reissued after a code is lost or expires', () => {
+  const first = accounts.createTeacher('pending-reset@example.edu');
+  const user = accounts.listTeachers()[0];
+  const renewed = accounts.reissueActivation(user.id);
+  assert.equal(accounts.listTeachers()[0].status, 'pending');
+  assert.throws(() => accounts.activateTeacher('pending-reset@example.edu', first.activationCode, 'TeacherPending123'), /invalid or expired/i);
+  accounts.activateTeacher('pending-reset@example.edu', renewed.activationCode, 'TeacherRenewed123');
+  assert.equal(accounts.verifyTeacherPassword('TeacherRenewed123', accounts.getTeacherForAuth('pending-reset@example.edu')), true);
+});
+
 test('teacher lifecycle leaves the administrator credential file byte-for-byte unchanged', () => {
   auth.writeAdmin('admin@example.edu', 'Existing-Admin-Password!23');
   assert.throws(() => accounts.createTeacher('ADMIN@example.edu'), /already exists/i);

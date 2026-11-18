@@ -191,7 +191,7 @@ export function disableTeacher(userId) {
 
 export function reissueActivation(userId) {
   const users = readUsers();
-  const user = users.find(item => item.id === userId && item.role === 'teacher' && item.status === 'active');
+  const user = users.find(item => item.id === userId && item.role === 'teacher' && ['active', 'pending'].includes(item.status));
   if (!user) throw new Error('Teacher account cannot be reissued');
 
   const activation = makeActivation();

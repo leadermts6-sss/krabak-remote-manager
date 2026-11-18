@@ -47,7 +47,7 @@ function sessionIceConfig(){const config=stunOnly();if(process.env.KRABAK_TURN_U
 async function handleApi(req,res,pathname){
  const method=req.method;let body={};
  if(method!=='GET'){if(!originAllowed(req))return reject(res,403,'Origin not allowed');if(req.headers['content-type']?.split(';')[0]!=='application/json')return reject(res,415,'JSON body required');try{body=await readBody(req)}catch(err){return reject(res,400,err.message)}if(!body||typeof body!=='object'||Array.isArray(body))return reject(res,400,'JSON object required')}
- if(pathname==='/api/status'&&method==='GET')return json(res,200,{ok:true,name:'KRABAK Remote Manager',initialised:!!readAdmin(),rtcConfig:stunOnly()});
+ if(pathname==='/api/status'&&method==='GET'){const current=getUser(req);return json(res,200,{ok:true,name:'KRABAK Remote Manager',initialised:!!readAdmin(),rtcConfig:stunOnly(),user:current?{email:current.email,role:current.role}:null});}
  if(pathname==='/api/login'&&method==='POST'){
   const ip=getIP(req);if(!rate(logins,ip,7,15*60_000))return reject(res,429,'Too many login attempts');
   const email=clean(body.email).toLowerCase();const admin=readAdmin();let user=null;

@@ -35,14 +35,14 @@ jobs:
       - name: Audit runtime dependencies
         run: npm audit --omit=dev --audit-level=high
 
-      - name: Test Node application
-        run: npm test
-
       - name: Test restricted release receiver
         run: python -m unittest discover -s deploy -p 'test_*.py' -v
 
       - name: Build frontend
         run: npm run build
+
+      - name: Test Node application and built client
+        run: npm test
 
       - name: Build and package release
         shell: bash

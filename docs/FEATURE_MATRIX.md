@@ -1,22 +1,21 @@
-# ตารางความสามารถ KRABAK Remote Manager 0.1.0
+# ตารางความสามารถ KRABAK Remote Manager
 
-| ฟีเจอร์ | Demo UI | Live Browser Share MVP | Windows Agent (อนาคต) |
-|---|---|---|---|
-| Dashboard / ค้นหาเครื่อง / สถานะ | ✅ ข้อมูลตัวอย่าง | ⚠️ ยังไม่ sync อุปกรณ์ถาวร | จำเป็นสำหรับรายการเครื่องจริง |
-| แอป Windows ที่เปิดอยู่ | ✅ ตัวอย่าง | ✅ เจ้าของเครื่องเลือกจาก browser picker | จำเป็นสำหรับ inventory app จริง |
-| เลือกเฉพาะ Window | ✅ จำลอง | ✅ Host เลือกเอง แล้ว Viewer เห็นสตรีม | จำเป็นสำหรับการควบคุม Windows Window จริง |
-| หลายจอ | ✅ 1–3 จอ + มุมมองรวม | ⚠️ Host เลือกได้ทีละจอ | จำเป็นสำหรับจอแยก/พร้อมกันจริง |
-| ดูภาพผ่านอินเทอร์เน็ต | ✅ จำลอง | ✅ WebRTC (STUN; อาจต้อง TURN) | เพิ่ม native capture stream ได้ |
-| ควบคุมเมาส์/คีย์บอร์ดของ Windows | ❌ | ❌ View-only | จำเป็น |
-| Unattended access | ❌ | ❌ ต้องกดยอมรับ | ต้องออกแบบอนุญาตล่วงหน้าแบบจำกัดสิทธิ์ |
-| คัดลอกข้อความ | ✅ ผ่าน UI | ✅ ส่งข้อความให้เลือกคัดลอก | ต้องมี native OS clipboard sync |
-| ส่งไฟล์ | ✅ จำลอง | ✅ WebRTC DataChannel สูงสุด 8 MB | เพิ่ม File Manager ของ Windows |
-| แชต | ✅ | ✅ WebSocket | ใช้ร่วมกับ Agent ได้ |
-| เลือกคุณภาพ / zoom / full screen | ✅ (คุณภาพยังจำลอง) | Zoom/Fullscreen; คุณภาพยังเป็น UI | ต้องเพิ่ม adaptive bitrate |
-| การบันทึกวิดีโอ | ❌ | ❌ | ออกแบบ consent และ retention ก่อน |
-| การป้องกันข้อมูล | ข้อความเตือน | Login, pairing, consent, HTTPS/WebRTC | เสริม MFA/RBAC/approval/audit/policy |
-| PWA Desktop / Mobile | ✅ | ✅ Viewer บางเบราว์เซอร์ | Mobile OS input มีข้อจำกัด |
-| เรียลไทม์ | จำลอง | ✅ Live WebRTC | เพิ่ม telemetry จริง |
-| VPS aaPanel Free + reverse proxy | ไฟล์พร้อม | ✅ มี Backend และตัวอย่าง deploy | ลง backend/Agent ตามเฟส |
+| ฟีเจอร์ | สถานะปัจจุบัน | ข้อจำกัด / หมายเหตุ |
+|---|---|---|
+| เข้าระบบ Admin/Teacher | ทำงาน | แยกบทบาทและจำกัดข้อมูลตามบัญชี |
+| สร้างบัญชีครู | ทำงาน | Admin ออก activation code ใช้ครั้งเดียว อายุ 24 ชั่วโมง |
+| ตั้งรหัสผ่านครู | ทำงาน | A–Z/a–z และ 0–9 ต้องมีทั้งสองชนิด 12–128 ตัว |
+| ออกจากระบบ | ทำงาน | ปุ่มแสดงที่แถบบนและหน้า Host |
+| รายการ Host | ทำงานขณะออนไลน์ | Host ลงทะเบียนและเชื่อม WebSocket; ไม่มีประวัติอุปกรณ์ออฟไลน์จำลอง |
+| ขอเชื่อมด้วยรหัส | ทำงาน | รหัสชั่วคราว ใช้ได้ครั้งเดียว |
+| อนุญาต Host | ทำงาน | กล่องยืนยันกลางหน้าจอ; Host ต้องกดอนุญาตและเลือก source ใน Browser picker |
+| ดูภาพ | ทำงาน | WebRTC ผ่าน STUN; NAT บางแบบต้องมี TURN |
+| ควบคุมเมาส์/คีย์บอร์ด Windows | ยังไม่มี | ต้องมี Windows Agent และ policy/consent เพิ่มเติม |
+| สลับ/แสดงหลายจอจริง | จำกัด | Host เลือก source ได้ทีละรายการผ่าน Browser picker |
+| แชต | ทำงานในเซสชัน | WebSocket; ข้อมูลไม่เก็บเป็นประวัติถาวร |
+| ส่งไฟล์ | ทำงานในเซสชัน | WebRTC DataChannel สูงสุด 8 MB; ผู้รับเลือกบันทึกเอง |
+| ประวัติกิจกรรม | ทำงาน | Audit ในหน่วยความจำและเห็นตามสิทธิ์ |
+| PWA | ทำงาน | ติดตั้งผ่าน Chrome/Edge หลังเปิด HTTPS |
+| Auto Deploy | ตั้งค่าใน GitHub Actions | Push `main` หลังผ่าน test/build และเปิด deploy gate |
 
-**หมายเหตุ:** Demo ไม่ใช่หลักฐานว่า Windows ถูกควบคุมจริง ให้ทดสอบ Host/Viewer โดยมีผู้ยินยอมจริงก่อนเริ่มงาน Production
+**การแสดงผลจาก Browser Share เป็น view-only** เว็บไม่ส่ง input เข้าระบบปฏิบัติการ Windows
