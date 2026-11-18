@@ -41,6 +41,9 @@ jobs:
       - name: Test restricted release receiver
         run: python -m unittest discover -s deploy -p 'test_*.py' -v
 
+      - name: Build frontend
+        run: npm run build
+
       - name: Build and package release
         shell: bash
         run: |
