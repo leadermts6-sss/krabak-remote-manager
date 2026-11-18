@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {isIP} from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -19,7 +20,16 @@ function originAllowed(req){const origin=req.headers.origin;if(!origin)return fa
 function headers(res,code=200,more={}){res.writeHead(code,{'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Permissions-Policy':'camera=(), microphone=(), geolocation=()','Cache-Control':'no-store',...more});}
 function json(res,status,data,more={}){headers(res,status,{'Content-Type':'application/json; charset=utf-8',...more});res.end(JSON.stringify(data));}
 function reject(res,status=400,message='Invalid request'){json(res,status,{error:message});}
-function getIP(req){return req.socket.remoteAddress||'unknown';}
+function getIP(req){
+ const remote=req.socket.remoteAddress||'unknown';
+ if(process.env.KRABAK_TRUST_PROXY!=='1')return remote;
+ const forwarded=req.headers['x-real-ip'];
+ if(typeof forwarded==='string'){
+  const ip=forwarded.trim();
+  if(isIP(ip))return ip;
+ }
+ return remote;
+}
 function rate(map,key,max,ms){let r=map.get(key);if(!r||now()-r.start>ms){r={start:now(),count:0};map.set(key,r);}r.count++;return r.count<=max;}
 function getUser(req){const token=parseCookies(req.headers.cookie).krabak_session;const s=sessions.get(token);if(!s)return null;if(s.expires<now()){sessions.delete(token);return null;}s.expires=now()+SESS_TTL;return s;}
 function sessionCookie(req,token,age){const proto=(process.env.KRABAK_TRUST_PROXY==='1'?req.headers['x-forwarded-proto']:null)||(req.socket.encrypted?'https':'http');return `krabak_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${age}; ${proto==='https'?'Secure; ':''}`;}
