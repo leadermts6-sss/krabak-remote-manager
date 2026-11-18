@@ -1,0 +1,118 @@
+name: Verify and deploy KRABAK Remote Manager
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Test and build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit
+
+      # Vite is build-only. The upstream picomatch advisory currently has no fixed release.
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Test Node application
+        run: npm test
+
+      - name: Test restricted release receiver
+        run: python -m unittest discover -s deploy -p 'test_*.py' -v
+
+      - name: Build and package release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/krabak-release"
+          cp -a dist server package.json "$RUNNER_TEMP/krabak-release/"
+          tar -czf "$RUNNER_TEMP/krabak-release.tar.gz" -C "$RUNNER_TEMP/krabak-release" dist server package.json
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: krabak-remote-release
+          path: ${{ runner.temp }}/krabak-release.tar.gz
+          if-no-files-found: error
+          retention-days: 5
+
+  deploy:
+    name: Deploy to Serva VPS
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PRODUCTION_DEPLOY_ENABLED == 'true' }}
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: production
+    permissions:
+      actions: read
+      contents: read
+    concurrency:
+      group: krabak-remote-production
+      cancel-in-progress: false
+    steps:
+      - name: Download tested release artifact
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: krabak-remote-release
+          path: ${{ runner.temp }}/krabak-release
+
+      - name: Verify pinned host key and deploy through restricted SSH command
+        shell: bash
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          EXPECTED_HOST_FINGERPRINT: SHA256:asI+dv2prIz5lYvG/MnRIUsURvPN6wx8sU9aFiLRHWQ
+        run: |
+          set -euo pipefail
+          if [[ -z "$DEPLOY_SSH_KEY" ]]; then
+            echo "Missing production environment secret DEPLOY_SSH_KEY" >&2
+            exit 1
+          fi
+          ssh_dir="$RUNNER_TEMP/krabak-ssh"
+          install -d -m 0700 "$ssh_dir"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$ssh_dir/id_ed25519"
+          chmod 0600 "$ssh_dir/id_ed25519"
+          ssh-keyscan -p 22 -t ed25519 168.199.21.38 > "$ssh_dir/known_hosts" 2>/dev/null
+          actual_fingerprint="$(ssh-keygen -lf "$ssh_dir/known_hosts" -E sha256 | awk '{print $2}')"
+          if [[ "$actual_fingerprint" != "$EXPECTED_HOST_FINGERPRINT" ]]; then
+            echo "Serva VPS host-key fingerprint did not match the pinned value" >&2
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/krabak-release/krabak-release.tar.gz"
+          archive_sha256="$(sha256sum "$archive" | cut -d' ' -f1)"
+          {
+            printf '%s\n%s\n' "$GITHUB_SHA" "$archive_sha256"
+            cat "$archive"
+          } | ssh -T \
+            -i "$ssh_dir/id_ed25519" \
+            -p 22 \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$ssh_dir/known_hosts" \
+            krabak-deploy@168.199.21.38 deploy
+
+      - name: Remove runner-side key material
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/krabak-ssh"

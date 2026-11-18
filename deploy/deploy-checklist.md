@@ -1,0 +1,22 @@
+# Deploy checklist (Serva VPS, Ubuntu 24.04, aaPanel Free)
+
+- [ ] Backup / snapshot VPS before adding a new service
+- [ ] Confirm aaPanel, Nginx and existing PHP/Node/MariaDB services; do not overwrite existing vhosts
+- [ ] Choose **new** dedicated DNS name (example: `remote.krabak.ac.th`; proposed only)
+- [ ] Set DNS A/AAAA records appropriately; ensure SSL issued and redirects to HTTPS
+- [ ] Install Node.js 22 LTS from a trusted source; verify binary path `command -v node`
+- [ ] Deploy project under `/opt/krabak-remote-manager`; user `krabak-remote` (non-root)
+- [ ] Run `npm ci` if lockfile is present, otherwise `npm install` and then `npm run build`
+- [ ] Make `/var/lib/krabak-remote` owned by unprivileged user and permission `0700`
+- [ ] Run `KRABAK_DATA_DIR=/var/lib/krabak-remote npm run setup:admin` interactively as that user
+- [ ] Store server secrets in `/etc/krabak-remote/remote.env` with owner root and restrictive permissions; adjust service `EnvironmentFile`
+- [ ] Start systemd service, confirm `systemctl status krabak-remote` and `curl http://127.0.0.1:8787/api/status`
+- [ ] Configure aaPanel Nginx reverse proxy for `/` AND `/ws` with Upgrade/Connection headers
+- [ ] Ensure public UFW only 80/443 and 22 as needed; **do not publicly expose 8787**
+- [ ] Add STUN and TURN if remote devices are on different ISP/mobile networks
+- [ ] Host opens browser on Windows Chrome/Edge Desktop, registers a one-time pairing code
+- [ ] Viewer admin logs in on another device, pairs code, Host approves then selects a window or monitor
+- [ ] Verify video, chat, file transfer, Stop sharing, device browser permission indicators
+- [ ] Test browser/PWA on mobile, note iOS browser capture limitations
+- [ ] Keep aaPanel (`21537` on this VPS) unchanged and independent of application server
+- [ ] Implement MFA/RBAC/audit/identity hardening before using for sensitive production computers

@@ -1,0 +1,22 @@
+{
+  "name": "krabak-remote-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "KRABAK Remote Manager — PWA + live consent-based browser window/screen sharing",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "server": "node server/index.mjs",
+    "start": "node server/index.mjs",
+    "setup:admin": "node server/setup-admin.mjs",
+    "test": "node --test server/*.test.mjs"
+  },
+  "devDependencies": {
+    "vite": "^8.3.8"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}
