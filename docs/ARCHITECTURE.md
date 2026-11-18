@@ -39,6 +39,6 @@ Host อยู่ในระบบและเชื่อม WebSocket ขณ�
 ## Production และ deployment
 
 - GitHub Actions ทดสอบและ build ก่อนสร้าง release artifact
-- Deploy เข้า Serva ผ่าน `main` เมื่อเปิด `PRODUCTION_DEPLOY_ENABLED` และใช้ dedicated SSH receiver/key
+- Deploy เข้า Serva อัตโนมัติเมื่อ push `main` ผ่าน CI และใช้ dedicated SSH receiver/key
 - ควรตรวจ URL `remote.krabak.ac.th`, TLS, Nginx, UFW และ systemd ด้วย health check ก่อนอ้างว่า deploy สำเร็จ
 - พอร์ต 8787 ต้องรับเฉพาะ localhost; SSH host key ต้องเทียบกับ fingerprint ที่ pin ไว้

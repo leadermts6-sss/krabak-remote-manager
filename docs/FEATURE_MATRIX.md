@@ -16,6 +16,6 @@
 | ส่งไฟล์ | ทำงานในเซสชัน | WebRTC DataChannel สูงสุด 8 MB; ผู้รับเลือกบันทึกเอง |
 | ประวัติกิจกรรม | ทำงาน | Audit ในหน่วยความจำและเห็นตามสิทธิ์ |
 | PWA | ทำงาน | ติดตั้งผ่าน Chrome/Edge หลังเปิด HTTPS |
-| Auto Deploy | ตั้งค่าใน GitHub Actions | Push `main` หลังผ่าน test/build และเปิด deploy gate |
+| Auto Deploy | ทำงาน | Push `main` หลังผ่าน test/build แล้ว GitHub Actions deploy อัตโนมัติ |
 
 **การแสดงผลจาก Browser Share เป็น view-only** เว็บไม่ส่ง input เข้าระบบปฏิบัติการ Windows

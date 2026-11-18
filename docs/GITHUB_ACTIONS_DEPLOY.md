@@ -1,13 +1,13 @@
 # GitHub Actions deployment to Serva
 
-This repository builds and tests the PWA and Node service on pull requests and pushes to `main`. The production job is deliberately gated by the repository variable `PRODUCTION_DEPLOY_ENABLED`. If it is absent or not the exact string `true`, no SSH connection to the VPS is made.
+This repository builds and tests the PWA and Node service on pull requests and pushes to `main`. After verification succeeds, pushes to `main` deploy automatically to the production VPS. Pull requests never deploy.
 
 ## One-time setup
 
 1. Create the GitHub repository as **private** and push the reviewed source to `main`.
 2. Run `deploy/prepare-server-layout.sh` once as root on the VPS. It copies the current working app into an immutable baseline release and adds a systemd drop-in that runs from `/opt/krabak-remote-manager/current`. It preserves the existing environment file, admin data, Nginx configuration, and UFW rules.
 3. Create a dedicated, passwordless CI-only Ed25519 keypair. Do not reuse the Windows SSH key. Send only its public key to `deploy/setup-deploy-account.sh` on the VPS. The private key belongs only in the GitHub `production` environment secret named `DEPLOY_SSH_KEY`.
-4. Keep `PRODUCTION_DEPLOY_ENABLED` unset until the source and first release are approved. Setting it to `true` enables automatic deploys for later successful pushes to `main`; it is a repository variable, not a secret.
+4. Configure the GitHub `production` environment with the CI-only private key secret `DEPLOY_SSH_KEY`. Once configured, every successful push to `main` deploys automatically; do not add the Windows SSH key or application credentials to this environment.
 
 The workflow pins the VPS ED25519 host-key fingerprint and rejects any mismatch. SSH accepts only the fixed `deploy` command through a forced-command key with `restrict`; the deploy account cannot obtain a shell, PTY, port forwarding, agent forwarding, or X11 forwarding.
 

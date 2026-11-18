@@ -45,7 +45,7 @@ npm run setup:admin
 
 ## การ Deploy
 
-GitHub Actions ตรวจ dependency, ทดสอบ backend และ build frontend ก่อนสร้าง release artifact งาน Deploy ไป Serva ทำงานเมื่อ push ไป `main` และเปิด repository variable `PRODUCTION_DEPLOY_ENABLED=true` โดยใช้ environment secret `DEPLOY_SSH_KEY` และตรวจ Host Key Fingerprint ที่ pin ไว้ก่อนเรียก restricted deploy receiver
+GitHub Actions ตรวจ dependency, ทดสอบ backend และ build frontend ก่อนสร้าง release artifact จากนั้น Deploy ไป Serva อัตโนมัติเมื่อ push ไป `main` และการตรวจผ่าน โดยใช้ environment secret `DEPLOY_SSH_KEY` และตรวจ Host Key Fingerprint ที่ pin ไว้ก่อนเรียก restricted deploy receiver
 
 ห้ามใส่ private key, activation code, รหัสผ่าน, `admin.json` หรือข้อมูลผู้ใช้ใน repository, workflow log หรือ release artifact
 
