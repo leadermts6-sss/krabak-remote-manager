@@ -125,6 +125,7 @@ test('reissue invalidates old activation, clears prior access, and accepts the n
 
 test('teacher lifecycle leaves the administrator credential file byte-for-byte unchanged', () => {
   auth.writeAdmin('admin@example.edu', 'Existing-Admin-Password!23');
+  assert.throws(() => accounts.createTeacher('ADMIN@example.edu'), /already exists/i);
   const file = path.join(dataDir, 'admin.json');
   const beforeBytes = fs.readFileSync(file);
   const issued = accounts.createTeacher('persist@example.edu');
@@ -133,4 +134,3 @@ test('teacher lifecycle leaves the administrator credential file byte-for-byte u
   assert.deepEqual(fs.readFileSync(file), beforeBytes);
   assert.equal(auth.verifyPassword('Existing-Admin-Password!23', auth.readAdmin()), true);
 });
-

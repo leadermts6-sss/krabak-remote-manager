@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { hashPassword, verifyPassword } from './auth.mjs';
+import { hashPassword, verifyPassword, readAdmin } from './auth.mjs';
 
 const ACTIVATION_TTL = 24 * 60 * 60 * 1000;
 const emailPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -113,7 +113,8 @@ export function validateTeacherPassword(password) {
 export function createTeacher(email) {
   const normalizedEmail = normalizeEmail(email);
   const users = readUsers();
-  if (users.some(user => user.email === normalizedEmail)) throw new Error('Teacher account already exists');
+  const adminEmail = readAdmin()?.email?.trim().toLowerCase();
+  if (adminEmail === normalizedEmail || users.some(user => user.email === normalizedEmail)) throw new Error('Account email already exists');
 
   const activation = makeActivation();
   const user = {
