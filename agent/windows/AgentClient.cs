@@ -187,8 +187,8 @@ internal sealed class AgentClient : IAsyncDisposable
                 if (socket.State == WebSocketState.CloseReceived)
                 {
                     await socket.CloseOutputAsync(
-                        result.CloseStatus ?? WebSocketCloseStatus.NormalClosure,
-                        result.CloseStatusDescription ?? string.Empty,
+                        socket.CloseStatus ?? WebSocketCloseStatus.NormalClosure,
+                        socket.CloseStatusDescription ?? string.Empty,
                         CancellationToken.None);
                 }
                 return;
