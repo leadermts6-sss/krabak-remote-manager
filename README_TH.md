@@ -12,13 +12,13 @@ KRABAK Remote Manager เป็นเว็บแอป/PWA สำหรับ�
 - ผู้ดูแลเห็น Host และประวัติทั้งหมด; ครูเห็น Host และประวัติตามบัญชีของตัวเอง
 - Browser Host ลงชื่อเข้าใช้และสร้างรหัสจับคู่ชั่วคราว ผู้ดูหรือครูส่งคำขอเชื่อมต่อได้
 - Browser Host ต้องอนุญาตคำขอและเลือกหน้าต่าง จอ หรือแท็บผ่านหน้าต่างของเบราว์เซอร์
-- Windows Agent มี source/API สำหรับแชร์ภาพและส่งเมาส์/คีย์บอร์ด Windows จริงผ่าน allowlist; การแจกจ่าย production ยังรอใบรับรอง code-signing ที่ Windows เชื่อถือ
+- Windows Agent รุ่น public v0.1.0 ใช้แชร์จอและส่งเมาส์/คีย์บอร์ด Windows จริงผ่าน allowlist; ดาวน์โหลด ZIP ได้จาก [GitHub Releases](https://github.com/leadermts6-sss/krabak-remote-manager/releases) โดยไฟล์รุ่นนี้ยังไม่มีลายเซ็น Authenticode
 - บัญชีเดียวกันเริ่มเซสชันตรงได้เมื่อผู้ใช้เปิด “เชื่อถือบัญชีนี้” บน Agent; คำขอจากบัญชีอื่นยังต้องกดยอมรับบนเครื่อง Windows
 - เมื่อคำขอมาถึง Host จะแสดงกล่องอนุญาตกลางหน้าจอ แม้กำลังใช้งานหน้าอื่นในแอป
 - สตรีมภาพใช้ WebRTC; แชตและ signaling ใช้ WebSocket; ไฟล์ส่งผ่าน DataChannel ขนาดไม่เกิน 8 MB
 - Host หยุดการแชร์ได้จากหน้าเว็บหรือจาก Chrome/Edge
 
-Browser Share ยังคงเป็น view-only และไม่สามารถข้าม browser picker ได้ การควบคุม Windows จริงทำได้เฉพาะกับ Windows Agent ที่ติดตั้งและลงทะเบียนบนเครื่องนั้นแล้ว เว็บไซต์บังคับ MFA แล้ว แต่ยังไม่มี signed production Agent ให้ดาวน์โหลดจนกว่าจะมีใบรับรอง code-signing ที่ Windows เชื่อถือและ workflow ตรวจ signature ผ่าน
+Browser Share ยังคงเป็น view-only และไม่สามารถข้าม browser picker ได้ การควบคุม Windows จริงทำได้เฉพาะกับ Windows Agent ที่ติดตั้งและลงทะเบียนบนเครื่องนั้นแล้ว Agent v0.1.0 เป็น public production-channel build แต่ยังไม่ลงนาม Authenticode; Windows อาจแสดงผู้เผยแพร่ไม่ทราบชื่อ โปรดตรวจ SHA-256 และอย่าปิด SmartScreen หรือระบบป้องกันเครื่อง
 
 ### Windows Agent
 
@@ -28,10 +28,14 @@ Browser Share ยังคงเป็น view-only และไม่สาม�
   dotnet publish agent/windows/KrabakRemoteAgent.csproj --configuration Release --runtime win-x64 --self-contained true --output artifacts/krabak-agent
   ```
 
-- Workflow compile unsigned development build ไว้ตรวจ CI เท่านั้นและไม่เผยแพร่ให้ดาวน์โหลด; signed production release จะทำจาก stable version tag หลังตรวจ signature ผ่านเท่านั้น
-- ยังไม่มี signed Agent ให้ติดตั้ง; production release ต้องตั้งค่า Microsoft Artifact Signing แบบ Public Trust และ GitHub OIDC ก่อน และไม่มี installer หรือ auto-start
+- GitHub Actions เผยแพร่รุ่น production-channel เมื่ออัปเดต RELEASE_VERSION และ RELEASE_NOTES.md โดยสร้าง self-contained ZIP สำหรับ Windows x64 และไฟล์ SHA-256 จาก source บน main
+- รุ่น v0.1.0 ยังไม่ลงนาม Authenticode และไม่มี installer หรือ auto-start; Windows อาจแจ้ง Unknown Publisher จนกว่าจะได้รับอนุมัติบริการ code signing
 - หลังลงทะเบียนอุปกรณ์แล้ว หน้ารายการจะเห็นสถานะออนไลน์และปุ่ม “ควบคุม Windows”; ก่อนติดตั้ง Agent เว็บจะแจ้งว่าเครื่องยังต้องใช้ Agent เพราะยังไม่มี process บน Windows ที่ส่ง input จริงได้
 - ใช้ได้เฉพาะบัญชี Windows ปัจจุบันและจอที่เลือก; ไม่รองรับหน้าต่าง UAC/secure desktop, การควบคุมโปรแกรมที่ยกระดับสิทธิ์, native touchscreen, หลายจอพร้อมกัน, clipboard หรือ file transfer
+
+## Code signing policy and privacy
+
+ดู [Code signing policy](CODE_SIGNING_POLICY.md) และ [Privacy notice](PRIVACY.md) สถานะปัจจุบันคือ Agent v0.1.0 ยังไม่ลงนาม Authenticode และยังไม่มี SignPath certificate ที่ใช้งานอยู่
 
 ## พัฒนาในเครื่อง
 
@@ -71,12 +75,12 @@ GitHub Actions ตรวจ dependency, ทดสอบ backend และ build 
 
 - Session, Host ที่ออนไลน์ และ audit ปัจจุบันเก็บในหน่วยความจำของ Node; restart ทำให้ session หาย
 - STUN อย่างเดียวอาจเชื่อมต่อไม่ได้เมื่อ NAT เข้มงวด; อาจต้องตั้ง coturn พร้อม ephemeral credentials
-- เว็บไซต์บังคับใช้ TOTP MFA แล้ว แต่ยังไม่มี signed production Agent release; workflow จะเผยแพร่หลังตั้งค่า Artifact Signing และตรวจ Authenticode ผ่านเท่านั้น
+- Windows Agent v0.1.0 ดาวน์โหลดได้จาก GitHub Releases แต่ยังไม่มีลายเซ็น Authenticode; การขอ SignPath และการลงนามในอนาคตยังไม่เสร็จ
 - Agent token ถูกเก็บด้วย DPAPI ของบัญชี Windows ปัจจุบัน; การถอนอุปกรณ์ทำผ่านหน้าอุปกรณ์หรือใน Agent
 - Browser capture ต้องมีกดอนุญาตและเลือกแหล่งแชร์โดยผู้ใช้บน Host ทุกครั้ง
 - การทดสอบ UI ข้ามเครือข่ายต้องทำจาก Chrome/Edge สองเครื่องที่ผู้ใช้ควบคุมและยินยอม
 
-**เอกสารประกอบ:** `docs/FEATURE_MATRIX.md`, `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/CODEX_DEPLOY_PROMPT.md`
+**เอกสารประกอบ:** `docs/FEATURE_MATRIX.md`, `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `PRIVACY.md`, `CODE_SIGNING_POLICY.md`, `docs/CODEX_DEPLOY_PROMPT.md`
 
 ## ใบอนุญาตและบริการ
 
@@ -84,4 +88,4 @@ GitHub Actions ตรวจ dependency, ทดสอบ backend และ build 
 
 บริการโฮสต์ KRABAK, ค่าโฮสต์หรือโครงสร้างพื้นฐาน, การสนับสนุน และบริการประกอบอื่นเป็นบริการแยกจากใบอนุญาตซอฟต์แวร์ การเรียกเก็บค่าบริการเหล่านั้นไม่ได้จำกัดสิทธิที่ AGPL-3.0 ให้ไว้กับซอร์สโค้ด
 
-การกำหนดใบอนุญาตนี้ไม่ได้เปลี่ยนการตั้งค่าการมองเห็นของ GitHub; repository ยังเป็น private จนกว่าจะมีการเปลี่ยนแปลงแยกต่างหาก
+repository นี้เปิดเป็น public แล้ว ซอร์สโค้ดและประวัติ commit เปิดเผยต่อสาธารณะตามการตั้งค่าของ GitHub

@@ -23,13 +23,15 @@
 ## ข้อจำกัด
 
 - MFA ถูกบังคับใช้สำหรับบัญชีที่มีสิทธิ์; trusted same-account access ยังคงปิดไว้ใน server จนกว่าจะผ่าน security review และตั้งค่าโดยผู้ดูแล
-- CI compile unsigned development build ไว้ตรวจโค้ดแต่ไม่เผยแพร่; ห้ามแจกจ่าย Agent จนกว่าจะมี code-signing certificate ที่ Windows เชื่อถือและ workflow ตรวจ Authenticode signature ผ่าน
+- GitHub Releases เผยแพร่ Windows Agent v0.1.0 เป็น production-channel build ที่ยังไม่ลงนาม Authenticode; ตรวจ checksum ก่อนใช้งานและอย่าปิด SmartScreen หรือ Endpoint Protection. การลงนามในอนาคตยังรอ SignPath review และการตั้งค่าที่ตรวจสอบแล้ว
 - Agent registry คงอยู่ใน `KRABAK_DATA_DIR`; session, online status และ audit บางส่วนยังอยู่ในหน่วยความจำและหมดเมื่อ backend restart
 - Sessions, Hosts ที่ออนไลน์ และ audit เก็บในหน่วยความจำ; restart ทำให้ข้อมูลชั่วคราวเหล่านี้หมดอายุ
 - rate limiting เป็น in-memory; ควรจำกัดที่ reverse proxy และเฝ้าระวังความผิดปกติ
 - Windows Agent ต้องติดตั้งแยกบน Windows เป้าหมายจึงควบคุม OS ได้ ไม่มี clipboard, file transfer, service mode หรือ unattended startup
 - STUN-only อาจใช้ไม่ได้หลัง NAT บางชนิด; production อาจต้องมี coturn พร้อม ephemeral credentials
 - Browser screen capture ต้องเกิดจาก gesture ของผู้ใช้และยืนยัน source ผ่าน Browser picker; ห้ามหลบ prompt
+
+ดู [Privacy notice](../PRIVACY.md) และ [Code signing policy](../CODE_SIGNING_POLICY.md) สำหรับข้อมูลการรับส่งข้อมูลและสถานะการลงนาม.
 
 ## ก่อนเพิ่มผู้ใช้หรือเปิดความสามารถใหม่
 

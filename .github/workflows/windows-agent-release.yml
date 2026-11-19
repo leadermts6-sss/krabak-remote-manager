@@ -1,0 +1,162 @@
+name: Publish Windows Agent release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent/windows/RELEASE_VERSION'
+      - 'agent/windows/RELEASE_NOTES.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-source:
+    name: Verify source before release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+          cache: npm
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install locked dependencies
+        run: npm ci --no-audit
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Test restricted release receiver
+        run: python -m unittest discover -s deploy -p 'test_*.py' -v
+      - name: Build frontend
+        run: npm run build
+      - name: Test Node application and built client
+        run: npm test
+      - name: Validate release version
+        id: version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content agent/windows/RELEASE_VERSION -Raw).Trim()
+          if ($env:GITHUB_REF -ne 'refs/heads/main') { throw 'Releases must be built from the main branch.' }
+          if ($version -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
+            throw 'RELEASE_VERSION must contain a stable semantic version such as 0.1.0.'
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+  publish:
+    name: Build and publish unsigned Windows Agent
+    needs: validate-source
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 10.0.x
+      - name: Build production-channel Agent
+        id: build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REF -ne 'refs/heads/main') { throw 'Releases must be built from the main branch.' }
+          $version = (Get-Content agent/windows/RELEASE_VERSION -Raw).Trim()
+          $tag = "v$version"
+          $existingTag = git ls-remote --tags origin "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not check for an existing release tag.' }
+          if (-not [string]::IsNullOrWhiteSpace($existingTag)) { throw "Release tag $tag already exists; bump RELEASE_VERSION before publishing." }
+          $output = 'artifacts/krabak-agent-production'
+          $publishArgs = @(
+            'agent/windows/KrabakRemoteAgent.csproj',
+            '--configuration', 'Release',
+            '--runtime', 'win-x64',
+            '--self-contained', 'true',
+            '--output', $output,
+            '-p:PublishSingleFile=true',
+            '-p:IncludeNativeLibrariesForSelfExtract=true',
+            '-p:DebugType=None',
+            '-p:DebugSymbols=false',
+            '-p:AgentChannel=Production',
+            "-p:Version=$version",
+            '-p:AssemblyTitle=KRABAK Windows Agent',
+            '-p:AssemblyProduct=KRABAK Windows Agent'
+          )
+          dotnet publish @publishArgs
+          if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed.' }
+          $exe = Join-Path $output 'KRABAK.RemoteAgent.exe'
+          if (-not (Test-Path $exe)) { throw 'Published Agent executable was not found.' }
+          $signature = Get-AuthenticodeSignature -FilePath $exe
+          if ($signature.Status.ToString() -ne 'NotSigned') { throw 'This workflow publishes unsigned builds only; unexpected Authenticode state.' }
+          Copy-Item agent/windows/README_TH.md (Join-Path $output 'README_TH.md')
+          Copy-Item agent/windows/RELEASE_NOTES.md (Join-Path $output 'RELEASE_NOTES.md')
+          Copy-Item CODE_SIGNING_POLICY.md (Join-Path $output 'CODE_SIGNING_POLICY.md')
+          Copy-Item PRIVACY.md (Join-Path $output 'PRIVACY.md')
+          Copy-Item LICENSE (Join-Path $output 'LICENSE')
+          @"
+          Product: KRABAK Windows Agent
+          Version: $version
+          Channel: Production
+          Architecture: win-x64
+          Authenticode: NotSigned
+          Source: https://github.com/$env:GITHUB_REPOSITORY
+          Source commit: $env:GITHUB_SHA
+          Workflow: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID
+          "@ | Set-Content (Join-Path $output 'BUILD_INFO.txt') -Encoding utf8
+          $zipName = "KRABAK-Agent-$version-win-x64.zip"
+          $zipPath = Join-Path $env:RUNNER_TEMP $zipName
+          Compress-Archive -Path (Join-Path $output '*') -DestinationPath $zipPath -CompressionLevel Optimal
+          $hash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumPath = Join-Path $env:RUNNER_TEMP 'SHA256SUMS.txt'
+          "$hash  $zipName" | Set-Content $checksumPath -Encoding ascii
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "zip_path=$zipPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "checksum_path=$checksumPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Create draft, upload artifacts, then publish release
+        shell: pwsh
+        env:
+          GH_RELEASE_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '${{ steps.build.outputs.version }}'
+          $tag = '${{ steps.build.outputs.tag }}'
+          $releaseNotes = Get-Content agent/windows/RELEASE_NOTES.md -Raw
+          $releaseNotes = $releaseNotes.Replace('{{VERSION}}', $version).Replace('{{SOURCE_COMMIT}}', $env:GITHUB_SHA)
+          $headers = @{
+            Accept = 'application/vnd.github+json'
+            Authorization = "Bearer $env:GH_RELEASE_TOKEN"
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $release = $null
+          $published = $false
+          try {
+            $body = @{
+              tag_name = $tag
+              target_commitish = $env:GITHUB_SHA
+              name = "KRABAK Windows Agent $version"
+              body = $releaseNotes
+              draft = $true
+              prerelease = $false
+            } | ConvertTo-Json -Depth 4
+            $release = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases" -Headers $headers -ContentType 'application/json' -Body $body
+            $uploadUrl = $release.upload_url -replace '\{\?name,label\}$', ''
+            $zipHeaders = $headers.Clone()
+            $zipHeaders['Content-Type'] = 'application/octet-stream'
+            $zipUri = "$uploadUrl?name=KRABAK-Agent-$version-win-x64.zip"
+            Invoke-RestMethod -Method Post -Uri $zipUri -Headers $zipHeaders -InFile '${{ steps.build.outputs.zip_path }}' | Out-Null
+            $checksumHeaders = $headers.Clone()
+            $checksumHeaders['Content-Type'] = 'application/octet-stream'
+            $checksumUri = "$uploadUrl?name=SHA256SUMS.txt"
+            Invoke-RestMethod -Method Post -Uri $checksumUri -Headers $checksumHeaders -InFile '${{ steps.build.outputs.checksum_path }}' | Out-Null
+            $publishBody = @{ draft = $false; prerelease = $false } | ConvertTo-Json
+            Invoke-RestMethod -Method Patch -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/$($release.id)" -Headers $headers -ContentType 'application/json' -Body $publishBody | Out-Null
+            $published = $true
+            Write-Host "Published unsigned production-channel Agent $version from commit $env:GITHUB_SHA."
+          }
+          finally {
+            if ($release -and -not $published) {
+              try { Invoke-RestMethod -Method Delete -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/$($release.id)" -Headers $headers | Out-Null } catch {}
+            }
+          }

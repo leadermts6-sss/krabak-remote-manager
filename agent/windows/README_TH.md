@@ -1,34 +1,39 @@
 # KRABAK Windows Agent
 
-Agent เป็นโปรแกรม Windows แยกจากเว็บ ต้องติดตั้งและเปิดทำงานบนเครื่องที่ต้องการควบคุม เว็บอย่างเดียวส่งเมาส์/คีย์บอร์ดเข้า Windows ไม่ได้
+Agent เป็นโปรแกรม Windows แยกจากเว็บ ต้องติดตั้งและเปิดทำงานบนเครื่องที่ต้องการควบคุม เว็บอย่างเดียวส่งเมาส์หรือคีย์บอร์ดเข้า Windows ไม่ได้
 
-## สถานะและข้อจำกัด
+## ดาวน์โหลดรุ่น public v0.1.0
 
-- เว็บไซต์บังคับ TOTP MFA ให้บัญชีทุกบัญชีก่อนใช้งาน; Agent ยังคงขอ consent บนเครื่องสำหรับคำขอข้ามบัญชี
-- CI compile x64 self-contained development build เพื่อตรวจโค้ด แต่ไม่เผยแพร่ artifact; ยังไม่มี signed production release หรือ installer จนกว่าจะมี certificate ที่ Windows เชื่อถือ
-- อย่าติดตั้ง development build บนเครื่องโรงเรียนหรือเครื่องที่มีข้อมูลจริง
-- Agent ทำงานในบัญชี Windows ปัจจุบัน ไม่ใช้ Administrator และไม่เพิ่ม auto-start
-- แชร์จอที่เลือกหนึ่งจอ, ส่งภาพ JPEG สูงสุด 1280×720 ที่ประมาณ 4 fps, และรับเมาส์/คีย์บอร์ดจริงผ่าน allowlist
-- Windows อาจแสดงคำเตือนเพราะไฟล์ไม่มีลายเซ็น; ห้ามปิด SmartScreen หรือ Endpoint Protection เพื่อใช้รุ่นนี้
-- ไม่ควบคุม UAC/secure desktop หรือโปรแกรมที่รันด้วยสิทธิ์สูงกว่า; ไม่มี native touchscreen, clipboard, file transfer, window picker หรือหลายจอพร้อมกัน
+- รุ่นนี้เป็น production-channel release สำหรับ Windows x64 สร้างจาก source ด้วย GitHub Actions และแจกเป็น self-contained ZIP โดยไม่มี installer และไม่ตั้ง auto-start
+- ไฟล์ยังไม่มีลายเซ็น Authenticode; Windows อาจแสดง Unknown Publisher หรือคำเตือน SmartScreen โปรดตรวจ SHA-256 ที่แนบกับ release และห้ามปิด SmartScreen หรือ Endpoint Protection เพื่อเรียกใช้
+- ดาวน์โหลดจาก [GitHub Releases](https://github.com/leadermts6-sss/krabak-remote-manager/releases) เท่านั้น; อ่าน [release notes](RELEASE_NOTES.md), [Code signing policy](../../CODE_SIGNING_POLICY.md) และ [Privacy notice](../../PRIVACY.md)
+- ใช้ Agent เฉพาะกับคอมพิวเตอร์ของคุณหรือเครื่องที่คุณได้รับอนุญาตให้ดูและควบคุม
 
-## วิธีสร้าง development build
+ตรวจ checksum ใน PowerShell:
+
+    Get-FileHash .\KRABAK-Agent-0.1.0-win-x64.zip -Algorithm SHA256
+
+เทียบค่า SHA-256 กับไฟล์ SHA256SUMS.txt ที่อยู่ในหน้า release ก่อนแตก ZIP
+
+## ความสามารถและข้อจำกัด
+
+- Agent ทำงานในบัญชี Windows ปัจจุบัน โดยไม่ใช้ Administrator และไม่เพิ่ม auto-start
+- แชร์ภาพจากจอที่เลือกหนึ่งจอ สูงสุด 1280×720 ที่ประมาณ 4 fps และรับเมาส์/คีย์บอร์ดจริงผ่าน allowlist
+- คำขอจากบัญชีอื่นต้องยอมรับจาก popup native บน Windows; same-account trusted access ยังปิดอยู่ฝั่ง server ตามค่าเริ่มต้น
+- มีปุ่มหยุดเซสชันให้ผู้ใช้ที่เครื่อง Host; Agent ไม่มี service mode หรือ unattended startup
+- ไม่ควบคุม UAC/secure desktop หรือโปรแกรมที่รันด้วยสิทธิ์สูงกว่า; ยังไม่มี native touchscreen, clipboard, file transfer, window picker หรือหลายจอพร้อมกัน
+
+## สร้าง development build จาก source
 
 บน Windows ที่ติดตั้ง .NET 10 SDK:
 
-```powershell
-dotnet publish agent/windows/KrabakRemoteAgent.csproj --configuration Release --runtime win-x64 --self-contained true --output artifacts/krabak-agent -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
-```
+    dotnet publish agent/windows/KrabakRemoteAgent.csproj --configuration Release --runtime win-x64 --self-contained true --output artifacts/krabak-agent -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
 
-## Signed production release
+ไฟล์ที่สร้างในเครื่องเป็น development build ของคุณเอง ไม่ใช่ artifact จากหน้า Releases
 
-การเผยแพร่ production ทำงานจาก tag stable รูปแบบ `vX.Y.Z` เท่านั้น; workflow ทดสอบ source ก่อน build, ลงนาม SHA-256 ผ่าน Microsoft Artifact Signing ด้วย GitHub OIDC, ตรวจ Authenticode chain กับ RFC 3161 timestamp แล้วจึงเผยแพร่ GitHub Release แบบ draft-to-publish หากการตั้งค่าหรือลายเซ็นไม่ผ่านจะไม่มีไฟล์เผยแพร่
+## Code signing status
 
-ต้องสร้าง GitHub Environment ชื่อ `code-signing` และกำหนด protected secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`; กำหนด Environment variables `AZURE_ARTIFACT_SIGNING_ENDPOINT`, `AZURE_ARTIFACT_SIGNING_ACCOUNT`, `AZURE_ARTIFACT_SIGNING_PROFILE`; ตั้ง Entra federated credential ให้ตรง subject `repo:leadermts6-sss/krabak-remote-manager:environment:code-signing` และให้แอปมี role `Artifact Signing Certificate Profile Signer` สำหรับ Public Trust profile
-
-การสร้าง Azure Artifact Signing resource ต้องยืนยันตัวตนและอาจมีค่าใช้จ่าย; ยังไม่ได้สร้าง resource หรือเปิดบริการใดใน Azure
-
-การลงนามใช้กุญแจที่บริการ Artifact Signing ปกป้อง ไม่อัปโหลด PFX หรือ private key เข้า GitHub; ห้ามใช้ self-signed certificate เพื่ออ้างว่าเป็นรุ่น production
+รุ่น v0.1.0 ยังไม่ลงนาม Authenticode และ SignPath Foundation ยังไม่ได้ออก certificate ให้โครงการ ดู [Code signing policy](../../CODE_SIGNING_POLICY.md) สำหรับสถานะและผู้รับผิดชอบ
 
 ## ลงทะเบียนอุปกรณ์สำหรับการทดสอบที่ได้รับอนุญาต
 
@@ -39,4 +44,4 @@ dotnet publish agent/windows/KrabakRemoteAgent.csproj --configuration Release --
 5. ระหว่างเซสชันมีหน้าต่างสถานะอยู่ด้านบนพร้อมปุ่ม **หยุดเซสชัน**; ไอคอนถาดระบบมีคำสั่งออกจาก Agent
 6. ถอนเครื่องจากหน้าอุปกรณ์เพื่อเพิกถอน token ฝั่ง server; หากเครื่องออฟไลน์ การเชื่อมต่อครั้งถัดไปจะถูกปฏิเสธและ Agent จะลบ token ที่ป้องกันด้วย DPAPI ในเครื่องนั้น
 
-การสร้าง signed artifact ยังขึ้นกับการตั้งค่า certificate secrets และการทดสอบยอมรับบน Windows เป้าหมาย; Agent ไม่มี auto-start และทำงานเฉพาะ session ผู้ใช้ที่เปิดโปรแกรม
+รุ่น public ปัจจุบันยังไม่มีลายเซ็น Authenticode; Agent ไม่มี auto-start และทำงานเฉพาะ session ผู้ใช้ที่เปิดโปรแกรม
