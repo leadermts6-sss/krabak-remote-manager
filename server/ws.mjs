@@ -24,7 +24,7 @@ export class MiniWebSocket extends EventEmitter{
  if(len>1_048_576)return this.close();if(this.buffer.length<pos+4+len)return;
  const mask=this.buffer.subarray(pos,pos+4);pos+=4;const payload=Buffer.from(this.buffer.subarray(pos,pos+len));this.buffer=this.buffer.subarray(pos+len);
  for(let i=0;i<payload.length;i++)payload[i]^=mask[i%4];
- if(op===0x8)return this.close();if(op===0x9){this.frame(0xa,payload);continue;}
+ if(op===0x8)return this.close();if(op===0x9){this.frame(0xa,payload);continue;}if(op===0xa)continue;
  if(op!==0x1) return this.close();try{this.emit('message',JSON.parse(payload.toString('utf8')));}catch{this.send({type:'error',error:'Invalid JSON'});}
  }}
  frame(op,data,{dropOnBackpressure=false}={}){if(this.closed)return false;const n=data.length;const headerLength=n<126?2:n<65536?4:10;const queued=this.socket.writableLength||0;

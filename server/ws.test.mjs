@@ -27,3 +27,25 @@ test('WebSocket drops screen frames under backpressure and caps other queued out
   assert.equal(ws.closed, true, 'non-media output closes instead of exceeding the queue cap');
   assert.equal(socket.ended, true);
 });
+
+test('WebSocket accepts client PONG keep-alive frames and continues reading text messages', () => {
+  const socket = new SlowSocket();
+  const ws = new MiniWebSocket(socket);
+  const messages = [];
+  ws.on('message', message => messages.push(message));
+
+  const maskedFrame = (opcode, payload) => {
+    const mask = Buffer.from([0x11, 0x22, 0x33, 0x44]);
+    const source = Buffer.from(payload);
+    const masked = Buffer.from(source);
+    for (let i = 0; i < masked.length; i++) masked[i] ^= mask[i % mask.length];
+    return Buffer.concat([Buffer.from([0x80 | opcode, 0x80 | source.length]), mask, masked]);
+  };
+  const pong = maskedFrame(0x0a, Buffer.alloc(0));
+  const pingMessage = maskedFrame(0x01, Buffer.from('{"type":"agent-ping"}'));
+  socket.emit('data', Buffer.concat([pong, pingMessage]));
+
+  assert.equal(ws.closed, false, 'an unsolicited PONG must keep the WebSocket open');
+  assert.equal(socket.ended, false, 'the transport must not be ended on a client PONG');
+  assert.deepEqual(messages, [{ type: 'agent-ping' }], 'the next application message must still be parsed');
+});
