@@ -8,6 +8,7 @@ import {readAdmin,verifyPassword,makeToken,parseCookies} from './auth.mjs';
 import {createTeacher,activateTeacher,listTeachers,getTeacherForAuth,verifyTeacherPassword,disableTeacher,reissueActivation} from './accounts.mjs';
 import {canManageUsers,visibleHosts,visibleAudit} from './authorization.mjs';
 import {AGENT_APPROVAL_TTL,createAgentStore,isAgentApprovalExpired,trustedAgentAccessEnabled,validateAgentFrame,validateAgentInput} from './agents.mjs';
+import {isMobileRequest} from './mobile-policy.mjs';
 import {wsUpgrade} from './ws.mjs';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -51,6 +52,7 @@ async function handleApi(req,res,pathname){
  const method=req.method;let body={};
  if(method!=='GET'){if(!originAllowed(req))return reject(res,403,'Origin not allowed');if(req.headers['content-type']?.split(';')[0]!=='application/json')return reject(res,415,'JSON body required');try{body=await readBody(req)}catch(err){return reject(res,400,err.message)}if(!body||typeof body!=='object'||Array.isArray(body))return reject(res,400,'JSON object required')}
  if(pathname==='/api/agents/enroll'&&method==='POST'){
+  if(isMobileRequest(req))return reject(res,403,'อุปกรณ์มือถือใช้เป็นผู้ควบคุมได้เท่านั้น ไม่สามารถลงทะเบียนเป็นเครื่องปลายทางได้');
   const ip=getIP(req);if(!rate(agentActivations,ip,8,15*60_000))return reject(res,429,'Too many Agent activation attempts');
   if(body.trustedAccess===true&&!trustedAgentAccessEnabled())return reject(res,403,'Trusted same-account control is disabled until MFA and security review are complete');
   const activated=agentStore.activateEnrollment(body.code,body.name,body.trustedAccess);if(!activated)return reject(res,400,'Invalid or expired Agent enrollment code');
@@ -110,6 +112,7 @@ async function handleApi(req,res,pathname){
   catch(err){return reject(res,409,'Teacher account cannot be reissued');}
  }
  if(pathname==='/api/host/register'&&method==='POST'){
+  if(isMobileRequest(req))return reject(res,403,'อุปกรณ์มือถือใช้เป็นผู้ควบคุมได้เท่านั้น ไม่อนุญาตแชร์หน้าจอจากมือถือ');
   const ip=getIP(req);if(!rate(registrations,ip,16,60*60_000))return reject(res,429,'Too many host registrations');const name=clean(body.name);if(name.length<2||name.length>80)return reject(res,400,'Host name must be 2-80 chars');let code;do{code=randomCode()}while(hosts.has(code));const token=makeToken();const host={id:crypto.randomUUID(),code,token,name,ownerEmail:user.email,expires:now()+CODE_TTL,ws:null,activeSession:null,ip};hosts.set(code,host);addAudit('host','สร้างรหัสจับคู่',name,user.email,[user.email]);return json(res,201,{code,token,expiresAt:new Date(host.expires).toISOString(),rtcConfig:sessionIceConfig()});
  }
  if(pathname==='/api/hosts'&&method==='GET'){
@@ -140,10 +143,11 @@ function handleWebSocket(req,socket,head){
  let viewer=null,viewerToken=null,role=null,host=null,lastAt=now();const timer=setInterval(()=>{if(now()-lastAt>5*60_000)ws.close()},45_000);timer.unref();
  ws.on('message',msg=>{lastAt=now();const type=msg?.type;
   if(type==='agent-hello'&&!role){
+   if(isMobileRequest(req)){send(ws,{type:'error',error:'อุปกรณ์มือถือใช้เป็นผู้ควบคุมได้เท่านั้น ไม่สามารถเป็นเครื่องปลายทางได้'});ws.close();return;}
    const device=agentStore.authenticate(msg.token);if(!device||!accountIsActive(device.ownerEmail)){send(ws,{type:'error',error:'Agent was revoked or account disabled'});ws.close();return;}if(agentsOnline.get(device.id)?.ws&&!agentsOnline.get(device.id).ws.closed){send(ws,{type:'error',error:'Agent is already connected'});ws.close();return;}
    host={id:device.id,deviceId:device.id,agent:true,name:device.name,ownerEmail:device.ownerEmail,trustedAccess:trustedAgentAccessEnabled()&&device.trustedAccess,code:'',expires:0,ws,activeSession:null,paired:false};role='agent';agentsOnline.set(device.id,host);rotateAgentPairingCode(host);send(ws,{type:'agent-hello-ok',deviceId:device.id,pairingCode:host.code,expiresAt:new Date(host.expires).toISOString()});return;
   }
-  if(type==='host-hello'&&!role){host=getHostByToken(msg.token);if(!host||host.ws&&!host.ws.closed){ws.send({type:'error',error:'Invalid or already connected host'});ws.close();return;}role='host';host.ws=ws;send(ws,{type:'host-hello-ok'});return;}
+  if(type==='host-hello'&&!role){if(isMobileRequest(req)){send(ws,{type:'error',error:'อุปกรณ์มือถือใช้เป็นผู้ควบคุมได้เท่านั้น ไม่สามารถเป็นเครื่องปลายทางได้'});ws.close();return;}host=getHostByToken(msg.token);if(!host||host.ws&&!host.ws.closed){ws.send({type:'error',error:'Invalid or already connected host'});ws.close();return;}role='host';host.ws=ws;send(ws,{type:'host-hello-ok'});return;}
   if(type==='viewer-hello'&&!role){viewer=getUser(req);viewerToken=parseCookies(req.headers.cookie).krabak_session;if(!viewer){send(ws,{type:'error',error:'Login required'});ws.close();return;}role='viewer';ws.sessionToken=viewerToken;let owned=userSockets.get(viewer.email);if(!owned){owned=new Set();userSockets.set(viewer.email,owned);}owned.add(ws);send(ws,{type:'viewer-hello-ok'});return;}
   if(!role){send(ws,{type:'error',error:'Authenticate first'});return;}
   if(type==='agent-unregister'&&role==='agent'){agentStore.revoke(host.id,host.ownerEmail);send(ws,{type:'agent-unregistered'});revokeHost(host);return;}

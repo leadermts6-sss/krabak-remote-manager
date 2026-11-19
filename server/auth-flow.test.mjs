@@ -64,8 +64,8 @@ async function availablePort() {
   });
 }
 
-async function api(route, { method = 'GET', body, cookie } = {}) {
-  const headers = { origin };
+async function api(route, { method = 'GET', body, cookie, headers: extraHeaders = {} } = {}) {
+  const headers = { ...extraHeaders, origin };
   if (body !== undefined) headers['content-type'] = 'application/json';
   if (cookie) headers.cookie = 'krabak_session=' + cookie;
   const response = await fetch(origin + route, {
@@ -121,7 +121,7 @@ async function createActiveTeacher(email, password = 'TeacherPassword123') {
   return { id: pending.id, password, cookie: await login(email, password) };
 }
 
-async function connectWebSocket(cookie = null) {
+async function connectWebSocket(cookie = null, extraHeaders = {}) {
   const socket = await new Promise((resolve, reject) => {
     const netSocket = Promise.resolve().then(() => {
       const client = createConnection({ host: '127.0.0.1', port });
@@ -210,6 +210,7 @@ async function connectWebSocket(cookie = null) {
 
       client.on('connect', () => {
         const cookieHeader = cookie ? 'Cookie: krabak_session=' + cookie + '\r\n' : '';
+        const extraHeaderLines = Object.entries(extraHeaders).map(([name, value]) => name + ': ' + value + '\r\n').join('');
         client.write(
           'GET /ws HTTP/1.1\r\n' +
           'Host: 127.0.0.1:' + port + '\r\n' +
@@ -218,7 +219,7 @@ async function connectWebSocket(cookie = null) {
           'Sec-WebSocket-Key: ' + key + '\r\n' +
           'Sec-WebSocket-Version: 13\r\n' +
           'Origin: ' + origin + '\r\n' +
-          cookieHeader + '\r\n'
+          cookieHeader + extraHeaderLines + '\r\n'
         );
       });
       client.on('data', handleFrameData);
@@ -507,4 +508,66 @@ test('Windows Agent enrollment, same-owner access, foreign approval, relay limit
 
   ownerViewer.close();
   guestViewer.close();
+});
+
+test('mobile devices can control desktop Agents but cannot act as a Host', { timeout: 30000 }, async () => {
+  const mobileHeaders = {
+    'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
+    'x-krabak-device-class': 'mobile',
+  };
+  const deniedBrowserHost = await api('/api/host/register', {
+    method: 'POST', cookie: adminCookie, body: { name: 'Phone Host' }, headers: mobileHeaders,
+  });
+  assert.equal(deniedBrowserHost.status, 403);
+  assert.match(deniedBrowserHost.payload.error, /มือถือ/);
+
+  const enrollment = await api('/api/agents/enrollment', { method: 'POST', cookie: adminCookie, body: {} });
+  const deniedAgentEnrollment = await api('/api/agents/enroll', {
+    method: 'POST', body: { code: enrollment.payload.code, name: 'Phone Agent', trustedAccess: false }, headers: mobileHeaders,
+  });
+  assert.equal(deniedAgentEnrollment.status, 403);
+  assert.match(deniedAgentEnrollment.payload.error, /มือถือ/);
+
+  const registered = await api('/api/agents/enroll', {
+    method: 'POST', body: { code: enrollment.payload.code, name: 'Desktop Agent', trustedAccess: false },
+  });
+  assert.equal(registered.status, 201, 'a blocked mobile attempt must leave the one-time code usable on Windows');
+  const mobileAgent = await connectWebSocket(null, mobileHeaders);
+  mobileAgent.send({ type: 'agent-hello', token: registered.payload.token });
+  const deniedAgentHello = await mobileAgent.waitFor('error');
+  assert.match(deniedAgentHello.error, /มือถือ/);
+  await mobileAgent.waitForClose();
+
+  const mobileBrowserHost = await connectWebSocket(null, mobileHeaders);
+  mobileBrowserHost.send({ type: 'host-hello', token: registered.payload.token });
+  const deniedBrowserHello = await mobileBrowserHost.waitFor('error');
+  assert.match(deniedBrowserHello.error, /มือถือ/);
+  await mobileBrowserHost.waitForClose();
+
+  const agent = await connectWebSocket();
+  agent.send({ type: 'agent-hello', token: registered.payload.token });
+  const agentHello = await agent.waitFor('agent-hello-ok');
+  const mobileViewer = await connectWebSocket(adminCookie, mobileHeaders);
+  mobileViewer.send({ type: 'viewer-hello' });
+  await mobileViewer.waitFor('viewer-hello-ok');
+
+  const session = await api('/api/sessions', {
+    method: 'POST', cookie: adminCookie, body: { code: agentHello.pairingCode }, headers: mobileHeaders,
+  });
+  assert.equal(session.status, 201, 'mobile viewers must be allowed to request a desktop session');
+  mobileViewer.send({ type: 'watch', sessionId: session.payload.id });
+  const invite = await agent.waitFor('invite');
+  assert.equal(invite.requester, adminEmail);
+  assert.equal(mobileViewer.messages.some(message => message.type === 'accepted'), false);
+  agent.send({ type: 'accept', sessionId: session.payload.id });
+  await mobileViewer.waitFor('accepted');
+  agent.send({ type: 'screen-frame', sessionId: session.payload.id, frame: 'aGVsbG8=', width: 640, height: 360 });
+  assert.equal((await mobileViewer.waitFor('screen-frame')).width, 640);
+  mobileViewer.send({ type: 'input', sessionId: session.payload.id, input: { kind: 'move', x: 200, y: 100 } });
+  assert.equal((await agent.waitFor('input')).input.kind, 'move');
+
+  mobileViewer.send({ type: 'end', sessionId: session.payload.id });
+  await agent.waitFor('ended');
+  agent.close();
+  mobileViewer.close();
 });

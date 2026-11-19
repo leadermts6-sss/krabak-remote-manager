@@ -1,5 +1,6 @@
 import { icon, escapeHtml as e } from './icons.js';
 import './agent.css';
+import { isMobileBrowser, mobileRequestHeaders, mobileWebSocketQuery } from './device-class.js';
 
 const root = document.getElementById('app');
 const stored = (name, def) => { try { return JSON.parse(localStorage.getItem(name)) ?? def; } catch { return def; } };
@@ -31,7 +32,7 @@ const sidebar = () => '<aside class="sidebar ' + (state.mobileMenu ? 'mobile-ope
   nav('dashboard', 'grid', 'ภาพรวม') + nav('devices', 'monitor', 'อุปกรณ์ของฉัน', String(state.devices.length)) +
   nav('activity', 'activity', 'ประวัติการใช้งาน') + nav('files', 'files', 'ไฟล์และการถ่ายโอน') +
   '<div class="nav-label" style="margin-top:27px">CONNECT & MANAGE</div>' +
-  nav('host', 'share', 'แชร์เครื่องนี้') + (state.account?.role === 'admin' ? nav('users', 'shield', 'บัญชีครู', String(state.users.length || '')) : '') +
+  (isMobileBrowser() ? '' : nav('host', 'share', 'แชร์เครื่องนี้')) + (state.account?.role === 'admin' ? nav('users', 'shield', 'บัญชีครู', String(state.users.length || '')) : '') +
   nav('settings', 'settings', 'ตั้งค่าการใช้งาน') +
   '<div class="sidebar-bottom"><div class="sidebar-status"><div class="server-tag"><i class="dot"></i> SERVER CONFIGURATION</div><div class="server-title">Serva VPS · Ubuntu</div><div class="server-sub">KRABAK Remote Manager</div></div>' +
   '<div class="profile"><div class="avatar">KB</div><div><strong>' + e(state.account?.email || '') + '</strong><small>' +
@@ -68,6 +69,10 @@ function render() {
   } else state.route = requested;
   if (state.route === 'login') { root.innerHTML = loginPage(); return; }
   if (state.route === 'activate') { root.innerHTML = activatePage(); return; }
+  if (state.route === 'host' && isMobileBrowser()) {
+    root.innerHTML = '<main class="auth-state" role="status"><section class="panel panel-pad"><h1>มือถือใช้เป็นผู้ควบคุมเท่านั้น</h1><p>เปิดเซสชันจากมือถือเพื่อดูหรือควบคุมคอมพิวเตอร์ที่ได้รับอนุญาต การแชร์หน้าจอต้องเริ่มจากคอมพิวเตอร์</p><a class="text-link" href="#/dashboard">กลับไปแดชบอร์ด</a></section></main>';
+    return;
+  }
   if (state.route === 'host') { root.innerHTML = '<div class="host-route-toolbar"><span>' + e(state.account?.email || '') + '</span>' + btn(icon('lock', 13) + ' ออกจากระบบ', 'logout', 'btn btn-danger btn-xs') + '</div>' + hostPage() + (state.modal ? modalHtml() : ''); attachHostVideo(); return; }
   if (state.route === 'users' && state.account?.role !== 'admin') { location.hash = '#/dashboard'; state.route = 'dashboard'; }
   let content = '';
@@ -129,20 +134,21 @@ function activityRow(item) {
 }
 
 function dashboardPage() {
+  const mobileViewer = isMobileBrowser();
   const agents = state.devices.filter(host => host.type === 'agent');
   const onlineAgents = agents.filter(host => host.online).length;
   const controlLabel = onlineAgents ? 'Agent ออนไลน์' : (agents.length ? 'Agent ออฟไลน์' : 'ยังไม่ได้ติดตั้ง Agent');
   const controlCount = agents.length ? `${onlineAgents}/${agents.length}<small>เครื่อง</small>` : '<small>ติดตั้ง Agent บน Windows เป้าหมายก่อนควบคุม</small>';
-  const actions = btn(icon('plus') + ' เพิ่ม Windows Agent', 'enroll-agent') + btn(icon('share') + ' แชร์ผ่านเบราว์เซอร์', 'go-host') + btn(icon('link') + ' เชื่อมต่อด้วยรหัส', 'connect-code', 'btn btn-primary');
+  const actions = btn(icon('plus') + ' เพิ่ม Windows Agent', 'enroll-agent') + (isMobileBrowser() ? '' : btn(icon('share') + ' แชร์ผ่านเบราว์เซอร์', 'go-host')) + btn(icon('link') + ' เชื่อมต่อด้วยรหัส', 'connect-code', 'btn btn-primary');
   const deviceItems = state.devices.length ? state.devices.slice(0, 5).map(hostRow).join('') :
-    emptyState('ยังไม่มีอุปกรณ์ออนไลน์', 'เมื่อเครื่องของคุณเปิดหน้าแชร์และเชื่อมต่อแล้ว รายการจริงจะแสดงที่นี่', btn(icon('share') + ' แชร์เครื่องนี้', 'go-host', 'btn btn-primary'));
+    emptyState('ยังไม่มีอุปกรณ์ออนไลน์', 'ลงทะเบียน Windows Agent บนคอมพิวเตอร์เป้าหมาย แล้วเข้าจากมือถือด้วยรหัสจับคู่', isMobileBrowser() ? '' : btn(icon('share') + ' แชร์เครื่องนี้', 'go-host', 'btn btn-primary'));
   const recent = state.events.length ? state.events.slice(0, 4).map(activityRow).join('') :
     emptyState('ยังไม่มีประวัติกิจกรรม', 'เหตุการณ์จริงจะแสดงเมื่อมีการเข้าสู่ระบบหรือเริ่มเซสชัน');
   return '<div class="content">' + header('WORKSPACE', 'ภาพรวม', 'ดูอุปกรณ์ที่กำลังออนไลน์และกิจกรรมของบัญชีนี้', actions) +
     '<section class="hero"><div class="hero-copy"><span class="hero-badge">' + icon('shield', 14) +
-    ' SECURE REMOTE WORKSPACE</span><h2>เชื่อมต่ออุปกรณ์ของคุณ</h2><p>เฉพาะอุปกรณ์จริงที่บัญชีนี้มีสิทธิ์จะอยู่ในรายการ Browser Host ต้องอนุญาตทุกครั้ง ส่วน Windows Agent ต้องติดตั้งบนเครื่องเป้าหมายและรับคำขอที่เครื่องทุกครั้ง เว้นแต่เปิด trusted access หลัง MFA และ security review</p>' +
-    '<div class="head-buttons">' + btn(icon('share') + ' เริ่มแชร์หน้าจอ', 'go-host', 'btn btn-primary') +
-    btn(icon('plus') + ' ใส่รหัสจับคู่', 'connect-code', 'btn') + '</div></div><div class="hero-graphic" aria-hidden="true"><div class="hg-monitor hg-main"><div class="hg-toolbar"><i></i><i></i><i></i></div><div class="hg-shapes"><div></div><div></div></div></div></div></section>' +
+    ' SECURE REMOTE WORKSPACE</span><h2>เชื่อมต่ออุปกรณ์ของคุณ</h2><p>' + (mobileViewer ? 'ใช้มือถือเป็นผู้ดูและผู้ควบคุมคอมพิวเตอร์ Windows ที่ได้รับอนุญาตได้ มือถือไม่สามารถแชร์หน้าจอเป็นเครื่องปลายทาง' : 'เฉพาะอุปกรณ์จริงที่บัญชีนี้มีสิทธิ์จะอยู่ในรายการ Browser Host ต้องอนุญาตทุกครั้ง ส่วน Windows Agent ต้องติดตั้งบนเครื่องเป้าหมายและรับคำขอที่เครื่องทุกครั้ง เว้นแต่เปิด trusted access หลัง MFA และ security review') + '</p>' +
+    '<div class="head-buttons">' + (isMobileBrowser() ? '' : btn(icon('share') + ' เริ่มแชร์หน้าจอ', 'go-host', 'btn btn-primary')) +
+    btn(icon('plus') + ' ใส่รหัสจับคู่', 'connect-code', 'btn') + '</div>' + (isMobileBrowser() ? '<div class="info-banner">มือถือใช้เป็นผู้ดูและผู้ควบคุมคอมพิวเตอร์ได้เท่านั้น ไม่สามารถแชร์หน้าจอมือถือ</div>' : '') + '</div><div class="hero-graphic" aria-hidden="true"><div class="hg-monitor hg-main"><div class="hg-toolbar"><i></i><i></i><i></i></div><div class="hg-shapes"><div></div><div></div></div></div></div></section>' +
     '<section class="stats"><div class="stat"><div class="stat-top"><div class="stat-icon">' + icon('monitor') +
     '</div><span class="stat-trend">ออนไลน์</span></div><label>อุปกรณ์ที่มองเห็น</label><div class="stat-number">' +
     state.devices.length + '<small>เครื่อง</small></div></div><div class="stat"><div class="stat-top"><div class="stat-icon blue">' +
@@ -156,7 +162,7 @@ function dashboardPage() {
 function devicesPage() {
   const query = state.search.trim().toLowerCase();
   const hosts = state.devices.filter(host => (host.name + ' ' + host.ownerEmail).toLowerCase().includes(query));
-  const actions = btn(icon('plus') + ' เพิ่ม Windows Agent', 'enroll-agent') + btn(icon('share') + ' แชร์เครื่องนี้', 'go-host') + btn(icon('plus') + ' เชื่อมต่อด้วยรหัส', 'connect-code', 'btn btn-primary');
+  const actions = btn(icon('plus') + ' เพิ่ม Windows Agent', 'enroll-agent') + (isMobileBrowser() ? '' : btn(icon('share') + ' แชร์เครื่องนี้', 'go-host')) + btn(icon('plus') + ' เชื่อมต่อด้วยรหัส', 'connect-code', 'btn btn-primary');
   const list = hosts.length ? (state.deviceView === 'grid'
     ? '<div class="device-grid">' + hosts.map(hostCard).join('') + '</div>'
     : '<div class="panel">' + hosts.map(hostRow).join('') + '</div>')
@@ -377,7 +383,7 @@ function modalHtml() {
 function showModal(type,extra={}){state.modal={type,...extra};render();document.querySelector('.modal')?.focus();}
 function toast(text,kind='ok'){let holder=document.getElementById('toasts');if(!holder){holder=document.createElement('div');holder.id='toasts';holder.className='toast-stack';holder.setAttribute('role','status');holder.setAttribute('aria-live','polite');holder.setAttribute('aria-atomic','true');document.body.append(holder);}const el=document.createElement('div');el.className='toast '+kind;el.innerHTML=`${icon(kind==='err'?'alert':'check',15)}<span>${e(text)}</span>`;holder.appendChild(el);setTimeout(()=>el.remove(),3900);}
 const api = async (path, opts = {}) => {
-  const response = await fetch('/api' + path, { credentials: 'same-origin', headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) }, ...opts });
+  const response = await fetch('/api' + path, { credentials: 'same-origin', ...opts, headers: { 'Content-Type': 'application/json', ...mobileRequestHeaders(), ...(opts.headers || {}) } });
   let body = {};
   try { body = await response.json(); } catch {}
   if (!response.ok) { const error = new Error(body.error || 'คำขอไม่สำเร็จ'); error.status = response.status; throw error; }
@@ -524,7 +530,7 @@ async function loadAccountData() {
     : '';
 }
 
-const wsUrl=()=>`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws`;
+const wsUrl=()=>`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws${mobileWebSocketQuery()}`;
 function connectSocket(role,token){
  if(state.ws){try{state.ws.close()}catch{}}
  const ws=new WebSocket(wsUrl());state.ws=ws;
@@ -546,7 +552,7 @@ function connectSocket(role,token){
  return ws;
 }
 function socketSend(msg){if(state.ws?.readyState===WebSocket.OPEN){state.ws.send(JSON.stringify(msg));return true;}return false;}
-async function startHost(){if(!state.backend){toast('ต้องเริ่ม Backend ก่อนจึงแชร์จริงได้ ดู README_TH.md','err');return;}const name=(document.getElementById('host-name')?.value||'Windows ของฉัน').trim().slice(0,80);try{const data=await api('/host/register',{method:'POST',body:JSON.stringify({name})});state.hostName=name;state.rtcConfig=data.rtcConfig||state.rtcConfig;state.hostToken=data.token;state.hostCode=data.code;state.hostRequests=[];state.hostStatus='connecting';state.hostExpiry=data.expiresAt;connectSocket('host',data.token);render();toast('สร้างรหัสจับคู่สำเร็จ');}catch(err){toast(err.message,'err');}}
+async function startHost(){if(isMobileBrowser()){toast('มือถือใช้เป็นผู้ควบคุมได้เท่านั้น ไม่อนุญาตแชร์หน้าจอมือถือ','err');return;}if(!state.backend){toast('ต้องเริ่ม Backend ก่อนจึงแชร์จริงได้ ดู README_TH.md','err');return;}const name=(document.getElementById('host-name')?.value||'Windows ของฉัน').trim().slice(0,80);try{const data=await api('/host/register',{method:'POST',body:JSON.stringify({name})});state.hostName=name;state.rtcConfig=data.rtcConfig||state.rtcConfig;state.hostToken=data.token;state.hostCode=data.code;state.hostRequests=[];state.hostStatus='connecting';state.hostExpiry=data.expiresAt;connectSocket('host',data.token);render();toast('สร้างรหัสจับคู่สำเร็จ');}catch(err){toast(err.message,'err');}}
 async function stopHost(){if(state.hostToken){try{await api('/host/revoke',{method:'POST',body:JSON.stringify({token:state.hostToken})});}catch{}}closePeer();stopStream();try{state.ws?.close()}catch{}state.ws=null;state.hostToken=null;state.hostCode=null;state.hostRequests=[];state.modal=null;state.hostStatus='idle';render();toast('ยกเลิกการแชร์แล้ว');}
 function stopStream(){if(state.localStream){state.localStream.getTracks().forEach(t=>t.stop());state.localStream=null;}state.activeSessionId=null;closePeer();}
 async function acceptHost(sessionId){try{
