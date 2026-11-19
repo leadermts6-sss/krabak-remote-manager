@@ -182,7 +182,17 @@ internal sealed class AgentClient : IAsyncDisposable
         while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
         {
             var result = await socket.ReceiveAsync(buffer.AsMemory(), cancellationToken);
-            if (result.MessageType == WebSocketMessageType.Close) return;
+            if (result.MessageType == WebSocketMessageType.Close)
+            {
+                if (socket.State == WebSocketState.CloseReceived)
+                {
+                    await socket.CloseOutputAsync(
+                        result.CloseStatus ?? WebSocketCloseStatus.NormalClosure,
+                        result.CloseStatusDescription ?? string.Empty,
+                        CancellationToken.None);
+                }
+                return;
+            }
             if (result.MessageType != WebSocketMessageType.Text) continue;
             message.Write(buffer, 0, result.Count);
             if (message.Length > 1_000_000) { socket.Abort(); return; }
