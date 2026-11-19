@@ -6,6 +6,7 @@ on:
     paths:
       - 'agent/windows/RELEASE_VERSION'
       - 'agent/windows/RELEASE_NOTES.md'
+      - '.github/workflows/windows-agent-release.yml'
   workflow_dispatch:
 
 permissions:
@@ -144,11 +145,11 @@ jobs:
             $uploadUrl = $release.upload_url -replace '\{\?name,label\}$', ''
             $zipHeaders = $headers.Clone()
             $zipHeaders['Content-Type'] = 'application/octet-stream'
-            $zipUri = "$uploadUrl?name=KRABAK-Agent-$version-win-x64.zip"
+            $zipUri = "$($uploadUrl)?name=KRABAK-Agent-$version-win-x64.zip"
             Invoke-RestMethod -Method Post -Uri $zipUri -Headers $zipHeaders -InFile '${{ steps.build.outputs.zip_path }}' | Out-Null
             $checksumHeaders = $headers.Clone()
             $checksumHeaders['Content-Type'] = 'application/octet-stream'
-            $checksumUri = "$uploadUrl?name=SHA256SUMS.txt"
+            $checksumUri = "$($uploadUrl)?name=SHA256SUMS.txt"
             Invoke-RestMethod -Method Post -Uri $checksumUri -Headers $checksumHeaders -InFile '${{ steps.build.outputs.checksum_path }}' | Out-Null
             $publishBody = @{ draft = $false; prerelease = $false } | ConvertTo-Json
             Invoke-RestMethod -Method Patch -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/$($release.id)" -Headers $headers -ContentType 'application/json' -Body $publishBody | Out-Null
