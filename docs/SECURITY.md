@@ -9,17 +9,21 @@
 - รายการบัญชีครูเก็บนอก web root ด้วย directory/file permissions `0700`/`0600`; ห้ามนำไฟล์ข้อมูลขึ้น repo หรือ artifact
 - สิทธิ์ Admin/Teacher ตรวจที่ API; รายการ Host และ audit จำกัดตามเจ้าของบัญชี
 - ปิด/ออก activation code ใหม่จะเพิกถอน session, WebSocket, Host และเซสชันที่เกี่ยวข้อง
-- Host ต้องอนุมัติคำขอและเลือกแหล่งแชร์จาก Browser picker ทุกครั้ง
+- Browser Host ต้องอนุมัติคำขอและเลือกแหล่งแชร์จาก Browser picker ทุกครั้ง
+- Windows Agent รุ่นทดลองใช้ token สุ่มที่เก็บเป็น digest ฝั่ง server; เครื่อง Windows เก็บ token ด้วย DPAPI, รับ input เฉพาะชนิดที่ allowlist, ทำงานเป็น user ปกติ และแสดงปุ่ม Stop ระหว่างเซสชัน
+- คำขอข้ามบัญชีต้องอนุมัติในหน้าต่าง native บน Windows; same-account trusted access ปิดเป็นค่าเริ่มต้นและต้องเลือกเปิดจาก Agent ด้วยตนเอง
 - WebRTC ใช้ DTLS-SRTP และ DataChannel; backend ไม่เก็บไฟล์หรือ media
 - Backend ค่าเริ่มต้น bind `127.0.0.1:8787`; ห้ามเปิดพอร์ตนี้สู่สาธารณะ
 - GitHub Actions ใช้ deploy-only key/receiver, pinned Serva host-key fingerprint และ SSH แบบ `BatchMode`/`StrictHostKeyChecking`
 
 ## ข้อจำกัด
 
-- ไม่มี MFA, persistent session store, durable Host identity หรือ per-device policy
+- ไม่มี MFA; **ห้ามเปิดการใช้งาน Windows Agent กับเครื่องโรงเรียน/ข้อมูลจริงหรือเปิด trusted same-account access ใน production จนกว่า MFA และ security review เสร็จ**
+- Windows Agent ปัจจุบันยังเป็น development build แบบ unsigned; ห้ามแจกจ่ายเป็น installer production จนกว่าจะลงนามและตรวจ signature ผ่านช่องทางติดตั้งที่ตรวจสอบได้
+- Agent registry คงอยู่ใน `KRABAK_DATA_DIR`; session, online status และ audit บางส่วนยังอยู่ในหน่วยความจำและหมดเมื่อ backend restart
 - Sessions, Hosts ที่ออนไลน์ และ audit เก็บในหน่วยความจำ; restart ทำให้ข้อมูลชั่วคราวเหล่านี้หมดอายุ
 - rate limiting เป็น in-memory; ควรจำกัดที่ reverse proxy และเฝ้าระวังความผิดปกติ
-- ไม่มี Windows Agent, OS input, clipboard integration หรือ unattended access
+- Windows Agent มี source สำหรับทดลอง; ต้องติดตั้งแยกบน Windows เป้าหมายจึงควบคุม OS ได้ ไม่มี clipboard, file transfer, service mode หรือ unattended startup
 - STUN-only อาจใช้ไม่ได้หลัง NAT บางชนิด; production อาจต้องมี coturn พร้อม ephemeral credentials
 - Browser screen capture ต้องเกิดจาก gesture ของผู้ใช้และยืนยัน source ผ่าน Browser picker; ห้ามหลบ prompt
 

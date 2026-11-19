@@ -18,21 +18,26 @@ Node Backend :8787
   └─ Static PWA files
        │ WebRTC DTLS-SRTP
        ▼
-Host browser: visible request popup + user approval + browser source picker
+Browser Host: visible request popup + user approval + browser source picker
+
+Windows Agent (แยกติดตั้งบนเครื่องผู้ใช้; development/unsigned)
+  ├─ .NET 10 user-mode tray process; DPAPI device token
+  ├─ native consent dialog for cross-account pairing + visible Stop window
+  ├─ bounded JPEG frames over authenticated WSS
+  └─ allowlisted mouse/keyboard events through Win32 SendInput
 ```
 
 Host อยู่ในระบบและเชื่อม WebSocket ขณะรอคำขอได้ แม้ผู้ใช้กำลังดูหน้าอื่นของเว็บแอป เมื่อคำขอเข้ามา UI แสดงกล่องอนุญาตกลางหน้าจอ ปุ่มอนุญาตต้องมาจากการกดของผู้ใช้และจึงเรียก `getDisplayMedia()` เพื่อเปิด Browser picker การอนุญาตเว็บครั้งก่อนจะไม่ถูกใช้แทนการยืนยันนี้
 
-## Windows Agent ระยะถัดไป
+## Windows Agent รุ่นทดลอง
 
-การควบคุม Windows จริงต้องพัฒนา Agent ที่ผู้ใช้ติดตั้งและอนุญาตโดยชัดเจน:
+Source ปัจจุบันอยู่ใน `agent/windows/` และ CI สร้าง x64 development artifact แบบ unsigned แยกจาก web release การควบคุม Windows จริงต้องติดตั้ง Agent บนทุกเครื่องเป้าหมาย:
 
-1. .NET 8 Windows Agent โดยใช้ Windows Graphics Capture สำหรับเลือก Window/Monitor จริง
-2. ส่งภาพผ่าน WebRTC พร้อมสลับจอและหลาย track; จัดการ ICE/TURN สำหรับ NAT
-3. input mouse/keyboard ผ่าน OS API โดย consent ต่อ session, policy แบบจำกัด และปุ่มหยุดบนเครื่อง
-4. Clipboard แบบสองทิศทางที่ opt-in; file transfer ผ่าน directory allowlist และ confirmation
-5. Device identity, revocation, audit, MFA/RBAC และ Windows auto-start ที่ผู้ใช้ตั้งค่าเอง
-6. Installer/EXE signed และ updater ตรวจลายเซ็น พร้อม uninstall/revoke ที่ตรวจสอบได้
+1. .NET 10 WinForms user-mode Agent เลือกจอหนึ่งจอและส่ง JPEG ผ่าน WSS; ใช้ Win32 SendInput สำหรับเมาส์/คีย์บอร์ด allowlist
+2. Same-account direct access ต้องเปิด trusted access เองบน Agent; cross-account pairing แสดงหน้าต่าง native ขออนุญาต และมี Stop window ระหว่างเซสชัน
+3. Agent token ใช้ DPAPI ของบัญชี Windows ปัจจุบัน; ไม่ยกระดับสิทธิ์, ไม่สร้าง auto-start, ไม่เข้าถึง UAC/secure desktop
+4. ยังต้องทำ MFA, security review, code-signing และ signed installer ก่อน production
+5. Window capture, หลายจอพร้อมกัน, native touchscreen, clipboard, file transfer, updater และ service mode ยังเป็นงานระยะถัดไป
 
 **ห้ามอ้างว่า Browser Share ควบคุมเมาส์หรือคีย์บอร์ด Windows ได้** Browser API อนุญาตเฉพาะการ capture ที่ผู้ใช้เลือก
 

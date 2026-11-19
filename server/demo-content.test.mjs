@@ -40,3 +40,13 @@ test('frontend source no longer includes fictional devices or demo actions', asy
 test('built production client no longer includes fictional devices or demo actions', async () => {
   await assertNoFixtures(await bundleFiles(), 'production bundle');
 });
+
+test('Windows Agent dashboard status reflects actual enrolled devices', async () => {
+  const source = await readFile(path.join(root, 'src', 'main.js'), 'utf8');
+  assert.match(source, /const agents = state\.devices\.filter\(host => host\.type === 'agent'\)/);
+  assert.match(source, /const onlineAgents = agents\.filter\(host => host\.online\)\.length/);
+  assert.match(source, /ยังไม่ได้ติดตั้ง Agent/);
+  assert.match(source, /Agent ออฟไลน์/);
+  assert.match(source, /Agent ออนไลน์/);
+  assert.match(source, /เพิ่ม Windows Agent/);
+});

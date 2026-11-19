@@ -370,3 +370,95 @@ test('teacher access is role-scoped, active Hosts are owner-scoped, and Host con
   wsA.close();
   wsB.close();
 });
+
+test('Windows Agent enrollment, same-owner access, foreign approval, relay limits, and revocation', { timeout: 30000 }, async () => {
+  const owner = { cookie: adminCookie, email: adminEmail };
+  const guest = await createActiveTeacher('agent.guest@example.edu');
+  const enrollment = await api('/api/agents/enrollment', { method: 'POST', cookie: owner.cookie, body: {} });
+  assert.equal(enrollment.status, 201);
+  assert.match(enrollment.payload.code, /^[A-Za-z0-9_-]{40,50}$/);
+
+  const activated = await api('/api/agents/enroll', {
+    method: 'POST',
+    body: { code: enrollment.payload.code, name: 'Agent Owner PC', trustedAccess: true },
+  });
+  assert.equal(activated.status, 201);
+  assert.match(activated.payload.token, /^[A-Za-z0-9_-]{40,50}$/);
+  const registry = await readFile(path.join(dataDir, 'agents.json'), 'utf8');
+  assert.equal(registry.includes(enrollment.payload.code), false);
+  assert.equal(registry.includes(activated.payload.token), false);
+
+  const agent = await connectWebSocket();
+  agent.send({ type: 'agent-hello', token: activated.payload.token });
+  const agentHello = await agent.waitFor('agent-hello-ok');
+  assert.equal(agentHello.deviceId, activated.payload.device.id);
+  assert.match(agentHello.pairingCode, /^[A-F0-9]{8}$/);
+
+  const ownerDevices = await api('/api/hosts', { cookie: owner.cookie });
+  const guestDevices = await api('/api/hosts', { cookie: guest.cookie });
+  assert.equal(ownerDevices.payload.hosts.find(item => item.id === activated.payload.device.id)?.type, 'agent');
+  assert.equal(guestDevices.payload.hosts.some(item => item.id === activated.payload.device.id), false);
+
+  const ownerViewer = await connectWebSocket(owner.cookie);
+  ownerViewer.send({ type: 'viewer-hello' });
+  await ownerViewer.waitFor('viewer-hello-ok');
+  const ownerSession = await api('/api/sessions', {
+    method: 'POST', cookie: owner.cookie, body: { deviceId: activated.payload.device.id },
+  });
+  assert.equal(ownerSession.status, 201);
+  assert.equal(ownerSession.payload.status, 'approved');
+  ownerViewer.send({ type: 'watch', sessionId: ownerSession.payload.id });
+  await ownerViewer.waitFor('accepted');
+  const ownerStarted = await agent.waitFor('agent-session-start');
+  assert.equal(ownerStarted.sessionId, ownerSession.payload.id);
+  agent.send({ type: 'screen-frame', sessionId: ownerSession.payload.id, frame: 'aGVsbG8=', width: 640, height: 360 });
+  assert.equal((await ownerViewer.waitFor('screen-frame')).width, 640);
+  ownerViewer.send({ type: 'input', sessionId: ownerSession.payload.id, input: { kind: 'move', x: 30000, y: 40000 } });
+  assert.equal((await agent.waitFor('input')).input.kind, 'move');
+  ownerViewer.send({ type: 'input', sessionId: ownerSession.payload.id, input: { kind: 'exec', command: 'whoami' } });
+  await wait(100);
+  assert.equal(agent.messages.some(item => item.type === 'input' && item.input?.kind === 'exec'), false);
+
+  assert.equal((await api('/api/sessions', {
+    method: 'POST', cookie: guest.cookie, body: { deviceId: activated.payload.device.id },
+  })).status, 403);
+  ownerViewer.send({ type: 'end', sessionId: ownerSession.payload.id });
+  await agent.waitFor('ended');
+
+  const guestViewer = await connectWebSocket(guest.cookie);
+  guestViewer.send({ type: 'viewer-hello' });
+  await guestViewer.waitFor('viewer-hello-ok');
+  const guestSession = await api('/api/sessions', {
+    method: 'POST', cookie: guest.cookie, body: { code: agentHello.pairingCode },
+  });
+  assert.equal(guestSession.status, 201);
+  assert.equal(guestSession.payload.status, 'pending');
+  guestViewer.send({ type: 'watch', sessionId: guestSession.payload.id });
+  const invite = await agent.waitFor('invite');
+  assert.equal(invite.requester, 'agent.guest@example.edu');
+  assert.equal(guestViewer.messages.some(item => item.type === 'accepted'), false);
+  agent.send({ type: 'accept', sessionId: guestSession.payload.id });
+  await guestViewer.waitFor('accepted');
+
+  for (let attempt = 0; attempt < 11; attempt++) {
+    const invalidPair = await api('/api/sessions', {
+      method: 'POST', cookie: guest.cookie, body: { code: 'FFFFFFFF' },
+    });
+    assert.equal(invalidPair.status, 404, 'invalid code remains indistinguishable before the account limit');
+  }
+  const rateLimitedPair = await api('/api/sessions', {
+    method: 'POST', cookie: guest.cookie, body: { code: 'FFFFFFFF' },
+  });
+  assert.equal(rateLimitedPair.status, 429);
+
+  const revoked = await api('/api/agents/' + activated.payload.device.id + '/revoke', {
+    method: 'POST', cookie: owner.cookie, body: {},
+  });
+  assert.equal(revoked.status, 200);
+  await agent.waitForClose();
+  await guestViewer.waitFor('ended');
+  assert.equal((await api('/api/hosts', { cookie: owner.cookie })).payload.hosts.some(item => item.id === activated.payload.device.id), false);
+
+  ownerViewer.close();
+  guestViewer.close();
+});

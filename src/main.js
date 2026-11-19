@@ -1,4 +1,5 @@
 import { icon, escapeHtml as e } from './icons.js';
+import './agent.css';
 
 const root = document.getElementById('app');
 const stored = (name, def) => { try { return JSON.parse(localStorage.getItem(name)) ?? def; } catch { return def; } };
@@ -9,7 +10,7 @@ const state = {
   authBusy: false, passwordVisible: false, activationEmail: '',
   ws: null, liveSession: null, remoteStream: null, localStream: null, pc: null, rtcChannel: null,
   hostToken: null, hostCode: null, hostName: '', hostRequests: [], hostStatus: 'idle', hostExpiry: null, activeSessionId: null, hostChat: [], sessionEnded: false, connection: 'idle',
-  files: [], right: 'chat', quality: 'balanced', zoom: 100, fit: true,
+  files: [], right: 'chat', quality: 'balanced', zoom: 100, fit: true, agentMode: 'mouse', agentFrameUrl: null, agentEnrollment: null, lastAgentInputAt: 0, agentKeys: new Map(), agentButtons: new Set(), agentLastPoint: { x: 0, y: 0 },
 };
 const now = () => new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
 const hasLive = () => !!state.liveSession;
@@ -89,6 +90,11 @@ function emptyState(title, detail, actions = '') {
 }
 
 function hostRow(host) {
+  if (host.type === 'agent') return '<div class="device-row"><div class="dev-mark">' + icon('monitor', 19) + '</div><div class="device-row-meta">' +
+    '<div class="device-row-title"><strong>' + e(host.name) + '</strong><i class="status-dot ' + (host.online ? '' : 'offline') + '"></i></div>' +
+    '<div class="dev-desc"><span>Windows Agent</span><span>·</span><span>' + (host.online ? (host.sessionActive ? 'กำลังควบคุม' : 'พร้อมเชื่อมต่อ') : 'ออฟไลน์') + '</span></div></div>' +
+    (host.online && host.ownerEmail === state.account?.email ? btn('ควบคุม', 'connect-device', 'btn btn-xs btn-primary', 'data-device-id="' + e(host.id) + '"') : '') +
+    btn('เพิกถอน', 'revoke-agent', 'btn btn-xs btn-danger', 'data-device-id="' + e(host.id) + '"') + '</div>';
   return '<div class="device-row"><div class="dev-mark">' + icon('monitor', 19) + '</div><div class="device-row-meta">' +
     '<div class="device-row-title"><strong>' + e(host.name) + '</strong><i class="status-dot"></i></div>' +
     '<div class="dev-desc"><span>Browser Host</span><span>·</span><span>' + (host.sessionActive ? 'กำลังแชร์อยู่' : 'พร้อมรับคำขอ') + '</span></div></div>' +
@@ -96,6 +102,15 @@ function hostRow(host) {
 }
 
 function hostCard(host) {
+  if (host.type === 'agent') {
+    const canConnect = host.online && host.trustedAccess && host.ownerEmail === state.account?.email;
+    return '<article class="panel device-card"><div class="device-head"><div class="dev-mark large">' + icon('monitor', 23) + '</div>' +
+      (host.online ? onlineStatus() : '<span class="pill"><i class="status-dot offline"></i> ออฟไลน์</span>') + '</div><h3>' + e(host.name) + '</h3><div class="alias">อุปกรณ์ Windows ที่ลงทะเบียนจริง</div>' +
+      '<div class="device-tags"><span class="pill">Windows Agent</span><span class="pill">' + (host.sessionActive ? 'กำลังควบคุม' : (host.online ? 'พร้อมเชื่อมต่อ' : 'ออฟไลน์')) + '</span></div>' +
+      '<div class="device-meta"><span>' + (state.account?.role === 'admin' ? e(host.ownerEmail) : 'อุปกรณ์ของบัญชีนี้') + '</span><span>' + (host.trustedAccess ? 'เชื่อถือบัญชีนี้' : 'ขออนุญาตทุกครั้ง') + '</span></div>' +
+      '<div class="device-actions">' + (canConnect ? btn(icon('monitor', 14) + ' ควบคุม Windows', 'connect-device', 'btn btn-primary w-full', 'data-device-id="' + e(host.id) + '"') : (!host.trustedAccess && host.ownerEmail === state.account?.email ? '<small>ขออนุญาตผ่านรหัสจับคู่ที่ Agent แสดง</small>' : '')) +
+      btn('เพิกถอน Agent', 'revoke-agent', 'btn btn-xs btn-danger', 'data-device-id="' + e(host.id) + '"') + '</div></article>';
+  }
   return '<article class="panel device-card"><div class="device-head"><div class="dev-mark large">' + icon('monitor', 23) + '</div>' +
     onlineStatus() + '</div><h3>' + e(host.name) + '</h3><div class="alias">อุปกรณ์ที่กำลังเชื่อมต่อด้วยบัญชีนี้</div>' +
     '<div class="device-tags"><span class="pill">' + icon('shield', 12) + ' Browser Host</span><span class="pill">' +
@@ -110,20 +125,24 @@ function activityRow(item) {
 }
 
 function dashboardPage() {
-  const actions = btn(icon('share') + ' แชร์เครื่องนี้', 'go-host') + btn(icon('plus') + ' เชื่อมต่อด้วยรหัส', 'connect-code', 'btn btn-primary');
+  const agents = state.devices.filter(host => host.type === 'agent');
+  const onlineAgents = agents.filter(host => host.online).length;
+  const controlLabel = onlineAgents ? 'Agent ออนไลน์' : (agents.length ? 'Agent ออฟไลน์' : 'ยังไม่ได้ติดตั้ง Agent');
+  const controlCount = agents.length ? `${onlineAgents}/${agents.length}<small>เครื่อง</small>` : 'ต้องใช้ Agent';
+  const actions = btn(icon('plus') + ' เพิ่ม Windows Agent', 'enroll-agent') + btn(icon('share') + ' แชร์ผ่านเบราว์เซอร์', 'go-host') + btn(icon('link') + ' เชื่อมต่อด้วยรหัส', 'connect-code', 'btn btn-primary');
   const deviceItems = state.devices.length ? state.devices.slice(0, 5).map(hostRow).join('') :
     emptyState('ยังไม่มีอุปกรณ์ออนไลน์', 'เมื่อเครื่องของคุณเปิดหน้าแชร์และเชื่อมต่อแล้ว รายการจริงจะแสดงที่นี่', btn(icon('share') + ' แชร์เครื่องนี้', 'go-host', 'btn btn-primary'));
   const recent = state.events.length ? state.events.slice(0, 4).map(activityRow).join('') :
     emptyState('ยังไม่มีประวัติกิจกรรม', 'เหตุการณ์จริงจะแสดงเมื่อมีการเข้าสู่ระบบหรือเริ่มเซสชัน');
   return '<div class="content">' + header('WORKSPACE', 'ภาพรวม', 'ดูอุปกรณ์ที่กำลังออนไลน์และกิจกรรมของบัญชีนี้', actions) +
     '<section class="hero"><div class="hero-copy"><span class="hero-badge">' + icon('shield', 14) +
-    ' SECURE REMOTE WORKSPACE</span><h2>เชื่อมต่ออุปกรณ์ของคุณ</h2><p>เฉพาะ Host ที่ออนไลน์ด้วยบัญชีนี้จะแสดงในรายการ การแชร์ภาพยังต้องได้รับอนุญาตจากเจ้าของเครื่องทุกครั้ง</p>' +
+    ' SECURE REMOTE WORKSPACE</span><h2>เชื่อมต่ออุปกรณ์ของคุณ</h2><p>เฉพาะอุปกรณ์จริงที่บัญชีนี้มีสิทธิ์จะอยู่ในรายการ Browser Host ต้องอนุญาตทุกครั้ง ส่วน Windows Agent ใช้การตั้งค่าความเชื่อถือของเครื่องและขออนุญาตเมื่อเชื่อมจากบัญชีอื่น</p>' +
     '<div class="head-buttons">' + btn(icon('share') + ' เริ่มแชร์หน้าจอ', 'go-host', 'btn btn-primary') +
     btn(icon('plus') + ' ใส่รหัสจับคู่', 'connect-code', 'btn') + '</div></div><div class="hero-graphic" aria-hidden="true"><div class="hg-monitor hg-main"><div class="hg-toolbar"><i></i><i></i><i></i></div><div class="hg-shapes"><div></div><div></div></div></div></div></section>' +
     '<section class="stats"><div class="stat"><div class="stat-top"><div class="stat-icon">' + icon('monitor') +
     '</div><span class="stat-trend">ออนไลน์</span></div><label>อุปกรณ์ที่มองเห็น</label><div class="stat-number">' +
     state.devices.length + '<small>เครื่อง</small></div></div><div class="stat"><div class="stat-top"><div class="stat-icon blue">' +
-    icon('shield') + '</div><span class="stat-trend">View only</span></div><label>การควบคุม Windows</label><div class="stat-number" style="font-size:22px">ต้องใช้ Agent</div></div></section>' +
+    icon('shield') + '</div><span class="stat-trend">' + e(controlLabel) + '</span></div><label>Windows Agent</label><div class="stat-number" style="font-size:22px">' + controlCount + '</div></div></section>' +
     '<section class="dashboard-cols"><div class="panel"><div class="panel-pad panel-title"><div><h2>อุปกรณ์ออนไลน์</h2><p>รายการ Host จริงของบัญชีที่เข้าสู่ระบบ</p></div><a class="text-link" href="#/devices">ดูทั้งหมด ' +
     icon('chevron', 13) + '</a></div><div class="device-list">' + deviceItems + '</div></div><div class="panel panel-pad"><div class="panel-title"><div><h2>กิจกรรมล่าสุด</h2><p>บันทึกเหตุการณ์ตามสิทธิ์ของบัญชี</p></div><a class="text-link" href="#/activity">ดูทั้งหมด ' +
     icon('chevron', 13) + '</a></div>' + recent + '<div class="help-wrap"><h4>' + icon('shield', 15) +
@@ -133,12 +152,12 @@ function dashboardPage() {
 function devicesPage() {
   const query = state.search.trim().toLowerCase();
   const hosts = state.devices.filter(host => (host.name + ' ' + host.ownerEmail).toLowerCase().includes(query));
-  const actions = btn(icon('share') + ' แชร์เครื่องนี้', 'go-host') + btn(icon('plus') + ' เชื่อมต่อด้วยรหัส', 'connect-code', 'btn btn-primary');
+  const actions = btn(icon('plus') + ' เพิ่ม Windows Agent', 'enroll-agent') + btn(icon('share') + ' แชร์เครื่องนี้', 'go-host') + btn(icon('plus') + ' เชื่อมต่อด้วยรหัส', 'connect-code', 'btn btn-primary');
   const list = hosts.length ? (state.deviceView === 'grid'
     ? '<div class="device-grid">' + hosts.map(hostCard).join('') + '</div>'
     : '<div class="panel">' + hosts.map(hostRow).join('') + '</div>')
-    : emptyState('ยังไม่มีอุปกรณ์ออนไลน์', 'เครื่องที่ไม่ได้เปิด Host จะแสดงเมื่อเชื่อมต่อบัญชีนี้', btn(icon('share') + ' แชร์เครื่องนี้', 'go-host', 'btn btn-primary'));
-  return '<div class="content">' + header('DEVICE MANAGER', 'อุปกรณ์ของฉัน', 'แสดงเฉพาะ Host ที่เชื่อมต่ออยู่และบัญชีนี้มีสิทธิ์มองเห็น', actions) +
+    : emptyState('ยังไม่มีอุปกรณ์', 'Windows Agent ที่ลงทะเบียนกับบัญชีนี้จะแสดงที่นี่เมื่อออนไลน์หรือออฟไลน์', btn(icon('plus') + ' เพิ่ม Windows Agent', 'enroll-agent', 'btn btn-primary'));
+  return '<div class="content">' + header('DEVICE MANAGER', 'อุปกรณ์ของฉัน', 'แสดงเฉพาะอุปกรณ์จริงที่ลงทะเบียนหรือ Host ที่กำลังเชื่อมต่อ', actions) +
     '<div class="controls-row"><div class="search-box">' + icon('search', 16) + '<input id="device-search" aria-label="ค้นหาอุปกรณ์" placeholder="ค้นหาชื่ออุปกรณ์…" value="' +
     e(state.search) + '"/></div><div class="segmented"><button data-act="grid-view" class="' + (state.deviceView === 'grid' ? 'active' : '') + '">' +
     icon('grid2', 14) + ' การ์ด</button><button data-act="list-view" class="' + (state.deviceView === 'list' ? 'active' : '') + '">' +
@@ -153,29 +172,35 @@ function remotePage() {
   const files = state.files.length ? state.files.map(file => '<div class="file-item">' + icon('file', 18) + '<div><strong>' +
     e(file.name) + '</strong><small>' + e(file.status) + '</small></div>' + (file.url ? btn('บันทึก', 'download-file', 'btn btn-xs', 'data-file-id="' + e(file.id) + '"') : '') + '</div>').join('') :
     '<div class="no-results" style="padding:23px 4px">ยังไม่มีไฟล์ในเซสชันนี้</div>';
+  const isAgent = !!state.liveSession.agent;
   let panel = '';
-  if (state.right === 'chat') panel = '<div class="right-body"><div class="remote-help">ข้อความในเซสชันนี้จะเห็นได้เฉพาะผู้เข้าร่วม</div><div id="chat-messages" class="chat-messages">' + chat + '</div></div>' +
+  if (isAgent) panel = '<div class="right-body"><h3>Windows Agent</h3><div class="detail-row"><span>เครื่อง</span><strong>' + e(state.liveSession.hostName) + '</strong></div>' +
+    '<div class="detail-row"><span>สถานะ</span><strong>' + e(state.connection) + '</strong></div><div class="remote-help">การควบคุมส่งเมาส์และแป้นพิมพ์จริงผ่าน Agent ที่ติดตั้งบน Windows · หยุดได้จากหน้าต่าง Agent ที่เครื่องปลายทาง</div>' +
+    '<p class="remote-help">โหมดสัมผัสแปลงการแตะ/ลากเป็นเมาส์ Windows · ใช้งานไม่ได้บนหน้าจอ UAC หรือหน้าจอเข้าสู่ระบบ</p></div>';
+  else if (state.right === 'chat') panel = '<div class="right-body"><div class="remote-help">ข้อความในเซสชันนี้จะเห็นได้เฉพาะผู้เข้าร่วม</div><div id="chat-messages" class="chat-messages">' + chat + '</div></div>' +
     '<form id="chat-form" class="chat-compose"><input id="chat-input" name="message" aria-label="ข้อความ" placeholder="พิมพ์ข้อความ…" autocomplete="off"/><button aria-label="ส่งข้อความ" type="submit">' + icon('arrow', 15) + '</button></form>';
   else if (state.right === 'files') panel = '<div class="right-body"><button class="file-zone" data-act="send-file">' + icon('upload', 24) +
     '<strong>ส่งไฟล์ไปยังอีกฝั่ง</strong><small>WebRTC DataChannel · สูงสุด 8 MB</small></button><input type="file" id="remote-file" class="hidden"/><div class="section-kicker mt-16">ไฟล์ในเซสชัน</div>' + files + '</div>';
   else panel = '<div class="right-body"><h3>ข้อมูลการเชื่อมต่อ</h3><div class="detail-row"><span>เครื่อง Host</span><strong>' +
     e(state.liveSession.hostName) + '</strong></div><div class="detail-row"><span>สถานะ</span><strong>' + e(state.connection) +
     '</strong></div><div class="remote-help">โหมดดูภาพเท่านั้น การควบคุมเมาส์และคีย์บอร์ด Windows ต้องมี Windows Agent ที่ติดตั้งและได้รับอนุญาต</div></div>';
-  return '<div class="remote-content"><div class="page-head remote-head"><div><div class="eyebrow">BROWSER SHARE SESSION</div><h1 class="heading">' +
-    e(state.liveSession.hostName) + '</h1><div class="subtitle device-topline"><span class="pill warning">' + icon('lock', 13) +
-    ' ดูภาพเท่านั้น</span><span class="pill info">' + e(state.connection) + '</span></div></div><div class="head-buttons">' +
+  return '<div class="remote-content"><div class="page-head remote-head"><div><div class="eyebrow">' + (isAgent ? 'WINDOWS AGENT SESSION' : 'BROWSER SHARE SESSION') + '</div><h1 class="heading">' +
+    e(state.liveSession.hostName) + '</h1><div class="subtitle device-topline"><span class="pill ' + (isAgent ? 'success' : 'warning') + '">' + icon(isAgent ? 'monitor' : 'lock', 13) +
+    (isAgent ? ' ควบคุม Windows' : ' ดูภาพเท่านั้น') + '</span><span class="pill info">' + e(state.connection) + '</span></div></div><div class="head-buttons">' +
     btn(icon('back', 14) + ' กลับอุปกรณ์', 'go-devices') + btn(icon('power', 14) + ' จบการเชื่อมต่อ', 'end-live', 'btn btn-danger') + '</div></div>' +
     '<div class="remote-layout"><section class="remote-stage" id="remote-stage"><div class="stage-top"><div class="stage-title">' +
     icon('monitor', 14) + ' LIVE · ' + e(state.liveSession.hostName) + '</div><div class="stage-control">' +
+    (isAgent ? '<div class="agent-mode-control" role="group" aria-label="โหมดควบคุม"><button class="tool-button ' + (state.agentMode === 'mouse' ? 'active' : '') + '" aria-pressed="' + (state.agentMode === 'mouse') + '" data-act="agent-mode-mouse">เมาส์</button><button class="tool-button ' + (state.agentMode === 'touch' ? 'active' : '') + '" aria-pressed="' + (state.agentMode === 'touch') + '" data-act="agent-mode-touch">สัมผัส</button></div>' : '') +
     btn(icon('sliders', 14), 'quality', 'tool-button', 'aria-label="คุณภาพภาพ"') + btn(icon('expand', 14), 'fullscreen', 'tool-button', 'aria-label="เต็มหน้าจอ"') + '</div></div>' +
-    '<div class="stage-body" id="remote-stage-body"><div class="capture-frame" id="live-placeholder">' + icon('video', 40) +
-    '<div>กำลังรอภาพจาก Host<br/><small>Host ต้องอนุมัติและเลือกแหล่งแชร์</small></div></div><video id="live-video" class="fit-video hidden" autoplay playsinline></video></div>' +
-    '<div class="stage-bottom"><span>' + icon('wifi', 12) + ' WebRTC</span><span>ดูภาพเท่านั้น · ' + state.zoom + '%</span><span>' + icon('shield', 12) + ' ต้องได้รับอนุญาต</span></div>' +
+    '<div class="stage-body" id="remote-stage-body"><div class="capture-frame' + (isAgent ? '' : '') + '" id="live-placeholder">' + icon('video', 40) +
+    '<div>' + (isAgent ? 'รอ Windows Agent ส่งภาพ' : 'กำลังรอภาพจาก Host') + '<br/><small>' + (isAgent ? 'ภาพจะแสดงเมื่อเซสชันได้รับอนุญาต' : 'Host ต้องอนุมัติและเลือกแหล่งแชร์') + '</small></div></div>' +
+    (isAgent ? '<img id="agent-screen" class="fit-video agent-screen hidden" alt="หน้าจอ Windows ที่แชร์" draggable="false" tabindex="0" width="1280" height="720"/>' : '<video id="live-video" class="fit-video hidden" autoplay playsinline></video>') + '</div>' +
+    '<div class="stage-bottom"><span>' + icon('wifi', 12) + (isAgent ? ' WSS Agent' : ' WebRTC') + '</span><span>' + (isAgent ? 'Windows จริง · ' + (state.agentMode === 'touch' ? 'โหมดสัมผัส' : 'โหมดเมาส์') : 'ดูภาพเท่านั้น') + ' · ' + state.zoom + '%</span><span>' + icon('shield', 12) + ' ต้องได้รับอนุญาต</span></div>' +
     '<div class="stage-tools">' + btn(icon('expand', 14) + ' พอดีหน้าจอ', 'fit', 'tool-button') + btn('−', 'zoom-out', 'tool-button', 'aria-label="ย่อภาพ"') +
-    btn('+', 'zoom-in', 'tool-button', 'aria-label="ขยายภาพ"') + btn(icon('chat', 14) + ' แชต', 'tab-chat', 'tool-button') +
-    btn(icon('files', 14) + ' ไฟล์', 'tab-files', 'tool-button') + '</div></section><aside class="panel right-panel"><div class="right-tab">' +
-    '<button class="' + (state.right === 'chat' ? 'active' : '') + '" data-act="tab-chat">' + icon('chat', 13) + ' แชต</button>' +
-    '<button class="' + (state.right === 'files' ? 'active' : '') + '" data-act="tab-files">' + icon('files', 13) + ' ไฟล์</button>' +
+    btn('+', 'zoom-in', 'tool-button', 'aria-label="ขยายภาพ"') + (isAgent ? '' : btn(icon('chat', 14) + ' แชต', 'tab-chat', 'tool-button') +
+    btn(icon('files', 14) + ' ไฟล์', 'tab-files', 'tool-button')) + '</div></section><aside class="panel right-panel"><div class="right-tab">' +
+    (isAgent ? '' : '<button class="' + (state.right === 'chat' ? 'active' : '') + '" data-act="tab-chat">' + icon('chat', 13) + ' แชต</button>' +
+    '<button class="' + (state.right === 'files' ? 'active' : '') + '" data-act="tab-files">' + icon('files', 13) + ' ไฟล์</button>') +
     '<button class="' + (state.right === 'info' ? 'active' : '') + '" data-act="tab-info">' + icon('info', 13) + ' รายละเอียด</button></div>' + panel + '</aside></div></div>';
 }
 function activityPage() {
@@ -295,7 +320,12 @@ function modalHtml() {
   if (!state.modal) return '';
   const m = state.modal;
   let title = 'ข้อมูลเพิ่มเติม', body = '';
-  if (m.type === 'connect') {
+  if (m.type === 'agent-enrollment') {
+    title = 'ลงทะเบียน Windows Agent';
+    body = '<p>รหัสนี้ผูกกับบัญชี <strong>' + e(state.account?.email || '') + '</strong> ใช้ครั้งเดียว หมดอายุใน 10 นาที และต้องกรอกใน KRABAK Windows Agent บนเครื่องปลายทาง</p>' +
+      '<div class="agent-code-box"><code translate="no">' + e(m.code) + '</code></div><div class="info-banner">Agent รุ่นทดลองยังไม่มีลายเซ็น และระบบยังไม่มี MFA · ใช้ทดสอบบนเครื่องส่วนตัวเท่านั้น อย่าเปิด trusted access บนเครื่องโรงเรียน เว็บจะควบคุม Windows จริงได้หลังติดตั้งและลงทะเบียน Agent บนเครื่องนั้น</div>' +
+      '<div class="modal-actions">' + btn('คัดลอกรหัส', 'copy-agent-code', 'btn btn-primary') + btn('ปิด', 'close-modal') + '</div>';
+  } else if (m.type === 'connect') {
     title = 'เชื่อมต่อด้วยรหัสจับคู่';
     body = '<p>กรอกรหัสชั่วคราวที่แสดงบนเครื่อง Host ผู้ใช้เครื่องนั้นต้องตรวจสอบและอนุญาตคำขอ</p>' +
       '<form id="pair-form"><div class="field"><label for="pair-code">รหัสจับคู่</label><input id="pair-code" name="code" class="code-input" placeholder="XXXXXXXX" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" required pattern="[a-zA-Z0-9]{8}"/>' +
@@ -316,8 +346,8 @@ function modalHtml() {
   } else if (m.type === 'help') {
     title = 'เกี่ยวกับ KRABAK Remote Manager';
     body = '<div class="info-banner mint">' + icon('check', 16) + ' แชร์ภาพจากเบราว์เซอร์ผ่าน WebRTC หลังจาก Host อนุญาต</div>' +
-      '<p><strong>การควบคุม Windows</strong><br/>เว็บแอปเป็น view-only ไม่ส่งคลิกหรือแป้นพิมพ์เข้าระบบปฏิบัติการ</p>' +
-      '<p><strong>การอนุญาต</strong><br/>Host ต้องเลือกหน้าต่างหรือจอจากตัวเลือกของเบราว์เซอร์ทุกครั้ง</p>' +
+      '<p><strong>การควบคุม Windows</strong><br/>Browser Share เป็น view-only; เมาส์และคีย์บอร์ด Windows จริงใช้ได้กับเครื่องที่ติดตั้งและลงทะเบียน KRABAK Windows Agent แล้วเท่านั้น</p>' +
+      '<p><strong>การอนุญาต</strong><br/>เครื่องที่เชื่อถือบัญชีเดียวกันอาจเชื่อมตรงตามตัวเลือก Agent; คำขอจากบัญชีอื่นต้องกดยอมรับในหน้าต่าง Windows Agent</p>' +
       '<div class="modal-actions">' + btn('ปิด', 'close-modal', 'btn btn-primary') + '</div>';
   } else if (m.type === 'pwa') {
     title = 'ติดตั้งแอป PWA';
@@ -491,16 +521,26 @@ async function loadAccountData() {
 }
 
 const wsUrl=()=>`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws`;
-function connectSocket(role,token){if(state.ws){try{state.ws.close()}catch{}}const ws=new WebSocket(wsUrl());state.ws=ws;ws.onopen=()=>{ws.send(JSON.stringify(role==='host'?{type:'host-hello',token}:{type:'viewer-hello'}));if(role==='viewer'&&state.liveSession)ws.send(JSON.stringify({type:'watch',sessionId:state.liveSession.id}));};ws.onmessage=async event=>{let data;try{data=JSON.parse(event.data)}catch{return}if(data.type==='error'){toast(data.error||'เซิร์ฟเวอร์ปฏิเสธคำขอ','err');return}
- if(data.type==='host-hello-ok'){state.hostStatus='waiting';render();return}
- if(data.type==='viewer-hello-ok'){if(state.liveSession)ws.send(JSON.stringify({type:'watch',sessionId:state.liveSession.id}));return}
- if(data.type==='invite'){state.hostRequests=[...state.hostRequests.filter(r=>r.sessionId!==data.sessionId),data];state.modal={type:'host-consent',sessionId:data.sessionId,requester:data.requester};render();document.querySelector('.modal')?.focus();toast('มีคำขอเข้ามา โปรดตรวจสอบก่อนอนุญาต');return}
- if(data.type==='accepted'){state.connection='กำลังเชื่อมต่อ WebRTC';render();return}
- if(data.type==='signal'){await handleSignal(data);return}
- if(data.type==='chat'){state.hostChat.push({mine:false,text:String(data.text||'').slice(0,2000),time:now()});if(state.route==='remote'||state.route==='host')render();toast('มีข้อความใหม่');return}
- if(data.type==='change-request'){toast('ผู้ดูแลขอเปลี่ยนแหล่งภาพ — กดหยุดแชร์แล้วอนุญาตใหม่','ok');return}
- if(data.type==='ended'){state.connection='สิ้นสุดแล้ว';state.sessionEnded=true;closePeer();if(role==='host'){stopStream();state.hostRequests=[];state.modal=null;render();}else{toast('เซสชันสิ้นสุดแล้ว');state.liveSession=null;navigate('devices');}return}
- };ws.onerror=()=>toast('ไม่สามารถเชื่อมต่อช่องสัญญาณได้','err');ws.onclose=()=>{if(state.ws!==ws)return;if(role==='host'&&state.hostCode){state.hostStatus='disconnected';toast('ช่องสัญญาณถูกตัด กรุณาสร้างรหัสจับคู่ใหม่','err');state.hostCode=null;state.hostRequests=[];state.modal=null;stopStream();render();}else if(role==='viewer'&&state.liveSession){state.connection='ช่องสัญญาณขัดข้อง';render();}};return ws;}
+function connectSocket(role,token){
+ if(state.ws){try{state.ws.close()}catch{}}
+ const ws=new WebSocket(wsUrl());state.ws=ws;
+ ws.onopen=()=>{ws.send(JSON.stringify(role==='host'?{type:'host-hello',token}:{type:'viewer-hello'}));if(role==='viewer'&&state.liveSession)ws.send(JSON.stringify({type:'watch',sessionId:state.liveSession.id}));};
+ ws.onmessage=async event=>{let data;try{data=JSON.parse(event.data)}catch{return}
+  if(data.type==='error'){toast(data.error||'เซิร์ฟเวอร์ปฏิเสธคำขอ','err');return}
+  if(data.type==='host-hello-ok'){state.hostStatus='waiting';render();return}
+  if(data.type==='viewer-hello-ok'){if(state.liveSession)ws.send(JSON.stringify({type:'watch',sessionId:state.liveSession.id}));return}
+  if(data.type==='invite'){state.hostRequests=[...state.hostRequests.filter(r=>r.sessionId!==data.sessionId),data];state.modal={type:'host-consent',sessionId:data.sessionId,requester:data.requester};render();document.querySelector('.modal')?.focus();toast('มีคำขอเข้ามา โปรดตรวจสอบก่อนอนุญาต');return}
+  if(data.type==='accepted'){state.connection=state.liveSession?.agent?'กำลังรับภาพจาก Windows Agent':'กำลังเชื่อมต่อ WebRTC';render();return}
+  if(data.type==='screen-frame'&&state.liveSession?.agent&&data.sessionId===state.liveSession.id){attachAgentFrame(data);return}
+  if(data.type==='signal'){await handleSignal(data);return}
+  if(data.type==='chat'){state.hostChat.push({mine:false,text:String(data.text||'').slice(0,2000),time:now()});if(state.route==='remote'||state.route==='host')render();toast('มีข้อความใหม่');return}
+  if(data.type==='change-request'){toast('ผู้ดูแลขอเปลี่ยนแหล่งภาพ — กดหยุดแชร์แล้วอนุญาตใหม่','ok');return}
+  if(data.type==='ended'){releaseAgentInput();state.connection='สิ้นสุดแล้ว';state.sessionEnded=true;closePeer();state.agentFrameUrl=null;if(role==='host'){stopStream();state.hostRequests=[];state.modal=null;render();}else{toast('เซสชันสิ้นสุดแล้ว');state.liveSession=null;navigate('devices');}return}
+ };
+ ws.onerror=()=>toast('ไม่สามารถเชื่อมต่อช่องสัญญาณได้','err');
+ ws.onclose=()=>{if(state.ws!==ws)return;if(role==='host'&&state.hostCode){state.hostStatus='disconnected';toast('ช่องสัญญาณถูกตัด กรุณาสร้างรหัสจับคู่ใหม่','err');state.hostCode=null;state.hostRequests=[];state.modal=null;stopStream();render();}else if(role==='viewer'&&state.liveSession){state.connection='ช่องสัญญาณขัดข้อง';render();}};
+ return ws;
+}
 function socketSend(msg){if(state.ws?.readyState===WebSocket.OPEN){state.ws.send(JSON.stringify(msg));return true;}return false;}
 async function startHost(){if(!state.backend){toast('ต้องเริ่ม Backend ก่อนจึงแชร์จริงได้ ดู README_TH.md','err');return;}const name=(document.getElementById('host-name')?.value||'Windows ของฉัน').trim().slice(0,80);try{const data=await api('/host/register',{method:'POST',body:JSON.stringify({name})});state.hostName=name;state.rtcConfig=data.rtcConfig||state.rtcConfig;state.hostToken=data.token;state.hostCode=data.code;state.hostRequests=[];state.hostStatus='connecting';state.hostExpiry=data.expiresAt;connectSocket('host',data.token);render();toast('สร้างรหัสจับคู่สำเร็จ');}catch(err){toast(err.message,'err');}}
 async function stopHost(){if(state.hostToken){try{await api('/host/revoke',{method:'POST',body:JSON.stringify({token:state.hostToken})});}catch{}}closePeer();stopStream();try{state.ws?.close()}catch{}state.ws=null;state.hostToken=null;state.hostCode=null;state.hostRequests=[];state.modal=null;state.hostStatus='idle';render();toast('ยกเลิกการแชร์แล้ว');}
@@ -527,9 +567,17 @@ async function handleSignal(data){const {sessionId,payload}=data;if(!payload||!s
  }catch(err){console.error(err);toast('WebRTC signaling: '+err.message,'err');}}
 function attachHostVideo(){const vid=document.getElementById('host-video');if(vid&&state.localStream){vid.srcObject=state.localStream;vid.classList.remove('hidden');vid.play().catch(()=>{});}}
 function attachViewerVideo(){const vid=document.getElementById('live-video');if(vid&&state.remoteStream){vid.srcObject=state.remoteStream;vid.classList.remove('hidden');const placeholder=document.getElementById('live-placeholder');if(placeholder)placeholder.classList.add('hidden');vid.play().catch(()=>{});}const stage=document.querySelector('#remote-stage-body .monitor-preview, #remote-stage-body .isolated-app');if(stage)stage.style.transform=`scale(${state.zoom/100})`;}
+function attachAgentFrame(data){const image=document.getElementById('agent-screen');if(!image)return;image.src='data:image/jpeg;base64,'+data.frame;image.width=data.width;image.height=data.height;image.dataset.width=String(data.width);image.dataset.height=String(data.height);image.classList.remove('hidden');document.getElementById('live-placeholder')?.classList.add('hidden');}
 function closePeer(){if(state.pc){try{state.pc.close()}catch{}state.pc=null}state.rtcChannel=null;state.remoteStream=null;pendingIce=[];}
-async function requestSession(ev){ev.preventDefault();const code=document.getElementById('pair-code')?.value.trim().toUpperCase();if(!state.backend){toast('ต้อง Deploy Backend ก่อนจึงจับคู่ได้','err');return;}if(!state.account){toast('กรุณาเข้าสู่ระบบผู้ดูก่อนเชื่อมต่อ','err');state.modal=null;navigate('login');return;}try{const data=await api('/sessions',{method:'POST',body:JSON.stringify({code})});state.rtcConfig=data.rtcConfig||state.rtcConfig;state.liveSession={id:data.id,hostName:data.hostName};state.connection='รอเจ้าของเครื่องอนุญาต';state.hostChat=[];state.files=[];state.modal=null;state.right='chat';state.remoteStream=null;connectSocket('viewer');navigate('remote/live');toast('ส่งคำขอแล้ว กรุณารอให้เจ้าของเครื่องยืนยัน');}catch(err){toast(err.message,'err');}}
-function endLive(){if(state.liveSession)socketSend({type:'end',sessionId:state.liveSession.id});closePeer();state.liveSession=null;state.hostChat=[];state.sessionEnded=true;try{state.ws?.close()}catch{}state.ws=null;navigate('devices');toast('สิ้นสุดเซสชันแล้ว');}
+async function requestSession(ev){ev.preventDefault();const code=document.getElementById('pair-code')?.value.trim().toUpperCase();if(!state.backend){toast('ต้อง Deploy Backend ก่อนจึงจับคู่ได้','err');return;}if(!state.account){toast('กรุณาเข้าสู่ระบบผู้ดูก่อนเชื่อมต่อ','err');state.modal=null;navigate('login');return;}try{const data=await api('/sessions',{method:'POST',body:JSON.stringify({code})});openSession(data);}catch(err){toast(err.message,'err');}}
+function openSession(data){state.rtcConfig=data.rtcConfig||state.rtcConfig;state.liveSession={id:data.id,hostName:data.hostName,agent:!!data.agent};state.connection=data.status==='approved'?'กำลังเชื่อมต่อ Windows Agent':'รอเจ้าของเครื่องอนุญาต';state.hostChat=[];state.files=[];state.modal=null;state.right=data.agent?'info':'chat';state.remoteStream=null;state.agentFrameUrl=null;connectSocket('viewer');navigate('remote/live');toast(data.status==='approved'?'เชื่อมต่ออุปกรณ์ที่เชื่อถือแล้ว':'ส่งคำขอแล้ว กรุณารอให้เจ้าของเครื่องอนุญาต');}
+async function requestAgentSession(deviceId){try{const data=await api('/sessions',{method:'POST',body:JSON.stringify({deviceId})});openSession(data);}catch(err){toast(err.message,'err');}}
+async function createAgentEnrollment(){try{const result=await api('/agents/enrollment',{method:'POST',body:'{}'});state.agentEnrollment=result;showModal('agent-enrollment',{code:result.code});}catch(err){toast(err.message,'err');}}
+function sendAgentInput(input){if(!state.liveSession?.agent)return false;return socketSend({type:'input',sessionId:state.liveSession.id,input});}
+function remoteCoordinates(image,event){const rect=image.getBoundingClientRect(),width=image.naturalWidth||Number(image.dataset.width),height=image.naturalHeight||Number(image.dataset.height);if(!rect.width||!rect.height||!width||!height)return null;const scale=Math.min(rect.width/width,rect.height/height),drawWidth=width*scale,drawHeight=height*scale,left=rect.left+(rect.width-drawWidth)/2,top=rect.top+(rect.height-drawHeight)/2;return{x:Math.max(0,Math.min(65535,Math.round((event.clientX-left)/drawWidth*65535))),y:Math.max(0,Math.min(65535,Math.round((event.clientY-top)/drawHeight*65535)))};}
+const virtualKeys={Backspace:8,Tab:9,Enter:13,ShiftLeft:160,ShiftRight:161,ControlLeft:162,ControlRight:163,AltLeft:164,AltRight:165,Escape:27,Space:32,PageUp:33,PageDown:34,End:35,Home:36,ArrowLeft:37,ArrowUp:38,ArrowRight:39,ArrowDown:40,Insert:45,Delete:46};
+function virtualKey(code){if(/^Key[A-Z]$/.test(code))return code.charCodeAt(3);if(/^Digit[0-9]$/.test(code))return code.charCodeAt(5);if(/^Numpad[0-9]$/.test(code))return 96+Number(code.slice(6));if(/^F([1-9]|1[0-2])$/.test(code))return 111+Number(code.slice(1));return virtualKeys[code]||null;}
+function endLive(){releaseAgentInput();if(state.liveSession)socketSend({type:'end',sessionId:state.liveSession.id});closePeer();state.liveSession=null;state.hostChat=[];state.sessionEnded=true;try{state.ws?.close()}catch{}state.ws=null;navigate('devices');toast('สิ้นสุดเซสชันแล้ว');}
 function sendChat(text){const safe=String(text||'').trim().slice(0,2000);if(!safe)return;const id=state.liveSession?.id||state.activeSessionId;if(!id){toast('เริ่มเซสชันที่ได้รับอนุญาตก่อนส่งข้อความ','err');return}if(!socketSend({type:'chat',sessionId:id,text:safe})){toast('ไม่ได้เชื่อมต่อช่องสัญญาณ','err');return}state.hostChat.push({mine:true,text:safe,time:now()});render();}
 let receivedFile=null;
 function setupChannel(channel){state.rtcChannel=channel;channel.binaryType='arraybuffer';channel.onopen=()=>toast('ช่องส่งไฟล์ WebRTC พร้อมใช้งาน');channel.onmessage=ev=>{
@@ -544,8 +592,12 @@ async function onAction(act,el){switch(act){
  case 'go-host':navigate('host');break;
  case 'go-devices':if(state.liveSession)endLive();else navigate('devices');break;
  case 'go-users':navigate('users');break;
- case 'connect-code':showModal('connect');break;
- case 'close-modal':if(state.modal?.type==='host-consent')break;state.modal=null;render();break;
+  case 'connect-code':showModal('connect');break;
+  case 'enroll-agent':await createAgentEnrollment();break;
+  case 'copy-agent-code':try{await navigator.clipboard.writeText(state.agentEnrollment?.code||'');toast('คัดลอกรหัสลงทะเบียน Agent แล้ว');}catch{toast('เบราว์เซอร์ไม่อนุญาตคลิปบอร์ด','err');}break;
+  case 'connect-device':await requestAgentSession(el.dataset.deviceId);break;
+  case 'revoke-agent':{if(!window.confirm('เพิกถอน Agent นี้หรือไม่? อุปกรณ์จะตัดการเชื่อมต่อและต้องลงทะเบียนใหม่'))break;try{await api('/agents/'+encodeURIComponent(el.dataset.deviceId)+'/revoke',{method:'POST',body:'{}'});await refreshHosts();render();toast('เพิกถอน Agent แล้ว');}catch(err){toast(err.message,'err');}break;}
+  case 'close-modal':if(state.modal?.type==='host-consent')break;if(state.modal?.type==='agent-enrollment')state.agentEnrollment=null;state.modal=null;render();break;
  case 'toggle-password':{const input=document.getElementById(el.dataset.input);if(input){input.type=input.type==='password'?'text':'password';el.setAttribute('aria-label',input.type==='password'?'แสดงรหัสผ่าน':'ซ่อนรหัสผ่าน');el.setAttribute('aria-pressed',String(input.type==='text'));}break;}
  case 'copy-activation-code':try{await navigator.clipboard.writeText(state.activationIssued?.activationCode||'');toast('คัดลอกรหัสเปิดใช้แล้ว');}catch{toast('เบราว์เซอร์ไม่อนุญาตคลิปบอร์ด','err');}break;
  case 'dismiss-activation':state.activationIssued=null;render();break;
@@ -557,6 +609,7 @@ async function onAction(act,el){switch(act){
  case 'tab-chat':state.right='chat';render();break;case 'tab-files':state.right='files';render();break;case 'tab-info':state.right='info';render();break;
  case 'end-live':endLive();break;
  case 'quality':showModal('quality');break;
+  case 'agent-mode-mouse':state.agentMode='mouse';render();break;case 'agent-mode-touch':state.agentMode='touch';render();break;
  case 'fit':state.zoom=100;state.fit=true;render();break;
  case 'zoom-in':state.zoom=Math.min(150,state.zoom+10);render();break;case 'zoom-out':state.zoom=Math.max(50,state.zoom-10);render();break;
  case 'fullscreen':{const stage=document.getElementById('remote-stage');if(!document.fullscreenElement)await stage?.requestFullscreen?.().catch(()=>toast('เบราว์เซอร์ไม่อนุญาตโหมดเต็มจอ','err'));else await document.exitFullscreen?.();break;}
@@ -578,13 +631,23 @@ async function onAction(act,el){switch(act){
  case 'refresh-audit':if(state.account)await refreshAudit().catch(err=>toast(err.message,'err'));break;
  case 'logout':await logout();break;
  default:break;
-}}document.addEventListener('click',async ev=>{const nav=ev.target.closest('[data-nav]');if(nav){navigate(nav.dataset.nav);return;}const act=ev.target.closest('[data-act]');if(act){ev.preventDefault();await onAction(act.dataset.act,act);return;}if(ev.target.matches('[data-overlay]')&&state.modal?.type!=='host-consent'){state.modal=null;render();}});
+}}document.addEventListener('click',async ev=>{const nav=ev.target.closest('[data-nav]');if(nav){navigate(nav.dataset.nav);return;}const act=ev.target.closest('[data-act]');if(act){ev.preventDefault();await onAction(act.dataset.act,act);return;}if(ev.target.matches('[data-overlay]')&&state.modal?.type!=='host-consent'){if(state.modal.type==='agent-enrollment')state.agentEnrollment=null;state.modal=null;render();}});
+document.addEventListener('pointermove',ev=>{const image=ev.target.closest?.('#agent-screen');if(!image||!state.liveSession?.agent)return;const point=remoteCoordinates(image,ev);if(!point)return;state.agentLastPoint=point;if(state.agentMode==='mouse'||ev.buttons){const time=performance.now();if(time-state.lastAgentInputAt>=35){state.lastAgentInputAt=time;sendAgentInput({kind:'move',...point});}}});
+document.addEventListener('pointerdown',ev=>{const image=ev.target.closest?.('#agent-screen');if(!image||!state.liveSession?.agent)return;const point=remoteCoordinates(image,ev);if(!point)return;const button=['left','middle','right'][ev.button];if(!button)return;ev.preventDefault();image.focus();try{image.setPointerCapture(ev.pointerId)}catch{}state.agentLastPoint=point;state.agentButtons.add(button);sendAgentInput({kind:'button',button,down:true,...point});});
+document.addEventListener('pointerup',ev=>{if(!state.liveSession?.agent)return;const button=['left','middle','right'][ev.button];if(!button||!state.agentButtons.has(button))return;const image=document.getElementById('agent-screen');const point=image?remoteCoordinates(image,ev)||state.agentLastPoint:state.agentLastPoint;state.agentButtons.delete(button);sendAgentInput({kind:'button',button,down:false,...point});});
+document.addEventListener('pointercancel',()=>releaseAgentInput());
+document.addEventListener('wheel',ev=>{if(!ev.target.closest?.('#agent-screen')||!state.liveSession?.agent)return;ev.preventDefault();const delta=Math.max(-1200,Math.min(1200,Math.round(-ev.deltaY)));if(delta)sendAgentInput({kind:'wheel',delta});},{passive:false});
+document.addEventListener('contextmenu',ev=>{if(ev.target.closest?.('#agent-screen'))ev.preventDefault();});
+document.addEventListener('keydown',ev=>{if(!state.liveSession?.agent||!ev.target.closest?.('#agent-screen'))return;const key=virtualKey(ev.code);if(!key)return;ev.preventDefault();if(!state.agentKeys.has(ev.code)){state.agentKeys.set(ev.code,key);sendAgentInput({kind:'key',virtualKey:key,down:true});}});
+document.addEventListener('keyup',ev=>{const key=state.agentKeys.get(ev.code);if(!key)return;state.agentKeys.delete(ev.code);sendAgentInput({kind:'key',virtualKey:key,down:false});});
+function releaseAgentInput(){for(const virtualKey of state.agentKeys.values())sendAgentInput({kind:'key',virtualKey,down:false});state.agentKeys.clear();for(const button of state.agentButtons)sendAgentInput({kind:'button',button,down:false,...state.agentLastPoint});state.agentButtons.clear();}
+window.addEventListener('blur',releaseAgentInput);
 document.addEventListener('submit',async ev=>{if(ev.target.matches('#login-form')){await login(ev);return}if(ev.target.matches('#activate-form')){await activateAccount(ev);return}if(ev.target.matches('#create-user-form')){await createTeacherAccount(ev);return}if(ev.target.matches('#pair-form')){await requestSession(ev);return}if(ev.target.matches('#chat-form')){ev.preventDefault();const input=document.getElementById('chat-input');const val=input?.value;input.value='';sendChat(val);return}if(ev.target.matches('#host-chat-form')){ev.preventDefault();const input=document.getElementById('host-chat-input');const val=input?.value;input.value='';sendChat(val);return}if(ev.target.matches('#clipboard-form')){ev.preventDefault();sendClipboard(document.getElementById('clipboard-text')?.value||'');return}});
 document.addEventListener('change',ev=>{const t=ev.target;if(t.id==='device-filter'){state.filter=t.value;render();}else if(t.dataset.setting){state.settings[t.dataset.setting]=t.value;localStorage.setItem('krabak-prefs',JSON.stringify(state.settings));render();toast('บันทึกการตั้งค่าแล้ว');}else if(t.id==='remote-file'||t.id==='host-file'){const file=t.files?.[0];if(file)sendFile(file);}});
 document.addEventListener('input',ev=>{if(ev.target.id==='device-search'){let pos=ev.target.selectionStart;state.search=ev.target.value;render();const inp=document.getElementById('device-search');inp?.focus();inp?.setSelectionRange(pos,pos);}if(ev.target.id==='zoom-range'){const small=ev.target.parentElement?.querySelector('small');if(small)small.textContent=ev.target.value+'%';}});
-document.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&state.modal&&state.modal.type!=='host-consent'){state.modal=null;render();}if((ev.ctrlKey||ev.metaKey)&&ev.key==='k'&&state.route==='devices'){ev.preventDefault();document.getElementById('device-search')?.focus();}});
+document.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&state.modal&&state.modal.type!=='host-consent'){if(state.modal.type==='agent-enrollment')state.agentEnrollment=null;state.modal=null;render();}if((ev.ctrlKey||ev.metaKey)&&ev.key==='k'&&state.route==='devices'){ev.preventDefault();document.getElementById('device-search')?.focus();}});
 window.addEventListener('hashchange',()=>{render();if(state.account){refreshHosts().catch(()=>{});refreshAudit().catch(()=>{});if(state.account.role==='admin')refreshUsers().catch(()=>{});}});
 setInterval(()=>{if(state.account)refreshHosts().catch(()=>{});},15000);
-window.addEventListener('pagehide',()=>{if(state.localStream){state.localStream.getTracks().forEach(t=>t.stop());}});
+window.addEventListener('pagehide',()=>{releaseAgentInput();if(state.localStream){state.localStream.getTracks().forEach(t=>t.stop());}});
 if('serviceWorker'in navigator&&location.protocol!=='file:'){window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));}
 render();checkBackend().catch(()=>{});

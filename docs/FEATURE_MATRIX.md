@@ -10,7 +10,9 @@
 | ขอเชื่อมด้วยรหัส | ทำงาน | รหัสชั่วคราว ใช้ได้ครั้งเดียว |
 | อนุญาต Host | ทำงาน | กล่องยืนยันกลางหน้าจอ; Host ต้องกดอนุญาตและเลือก source ใน Browser picker |
 | ดูภาพ | ทำงาน | WebRTC ผ่าน STUN; NAT บางแบบต้องมี TURN |
-| ควบคุมเมาส์/คีย์บอร์ด Windows | ยังไม่มี | ต้องมี Windows Agent และ policy/consent เพิ่มเติม |
+| Windows Agent | รุ่นทดลอง / ยัง unsigned | Source และ local x64 build ผ่าน; ยังไม่ทดสอบ session จริงกับเครื่องเป้าหมาย; ต้องติดตั้งและลงทะเบียนก่อน |
+| ควบคุมเมาส์/คีย์บอร์ด Windows | มี implementation; ยังไม่ยืนยัน E2E | Agent ส่ง input จริงผ่าน allowlist; ใช้บัญชี Windows ปัจจุบัน; อาจควบคุม secure/UAC desktop หรือโปรแกรมที่ยกระดับสิทธิ์ไม่ได้ |
+| อนุมัติเซสชัน | ทำงานตามนโยบาย Agent | บัญชีเดียวกันเชื่อมตรงได้เมื่อเปิด trusted access บน Agent; บัญชีอื่นต้องอนุญาตจากหน้าต่าง native บน Windows |
 | สลับ/แสดงหลายจอจริง | จำกัด | Host เลือก source ได้ทีละรายการผ่าน Browser picker |
 | แชต | ทำงานในเซสชัน | WebSocket; ข้อมูลไม่เก็บเป็นประวัติถาวร |
 | ส่งไฟล์ | ทำงานในเซสชัน | WebRTC DataChannel สูงสุด 8 MB; ผู้รับเลือกบันทึกเอง |
@@ -18,4 +20,4 @@
 | PWA | ทำงาน | ติดตั้งผ่าน Chrome/Edge หลังเปิด HTTPS |
 | Auto Deploy | ทำงาน | Push `main` หลังผ่าน test/build แล้ว GitHub Actions deploy อัตโนมัติ |
 
-**การแสดงผลจาก Browser Share เป็น view-only** เว็บไม่ส่ง input เข้าระบบปฏิบัติการ Windows
+**Browser Share เป็น view-only** การควบคุม Windows จริงมีเฉพาะเครื่องที่ติดตั้งและลงทะเบียน Windows Agent แล้ว รุ่น Agent ปัจจุบันยังไม่ลงนามและไม่พร้อมใช้งาน production จนกว่าจะเพิ่ม MFA, security review และ code-signing

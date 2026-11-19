@@ -22,3 +22,9 @@ The app environment (`/etc/krabak-remote/remote.env`) and persistent data (`/var
 - Node.js dependencies are installed from `package-lock.json`.
 - `npm test`, production dependency audit, `npm run build`, and Python archive-safety tests must pass before a release artifact is created.
 - Vite is a build-time dependency and is not deployed as a runtime package. The full development dependency tree has a known `picomatch` advisory with no upstream fix listed; the workflow audits runtime dependencies separately and does not expose the Vite dev server.
+
+## Windows Agent development artifact
+
+`.github/workflows/windows-agent-build.yml` independently builds `agent/windows/` on Windows and publishes `KRABAK-Agent-unsigned-development` for 7 days. This artifact is unsigned, intended only for controlled development evaluation, and is not added to the website release archive. The production receiver allowlist remains `dist/`, `server/`, and `package.json`.
+
+The current Node/PWA deployment can expose Agent enrollment and relay endpoints, but that does not install the Agent on any Windows computer. The website correctly continues to report that a target requires the Agent until an Agent is installed and online. Do not use trusted same-account unattended sessions on production accounts until MFA and security review are complete; do not distribute an unsigned executable to school computers.

@@ -1,0 +1,42 @@
+name: Windows Agent development build
+
+on:
+  push:
+    branches: [main, codex/windows-agent-control]
+    paths:
+      - 'agent/windows/**'
+      - '.github/workflows/windows-agent-build.yml'
+  pull_request:
+    paths:
+      - 'agent/windows/**'
+      - '.github/workflows/windows-agent-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-unsigned-development-agent:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish Windows x64 development build
+        run: >-
+          dotnet publish agent/windows/KrabakRemoteAgent.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --output artifacts/krabak-agent-unsigned-development
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=None
+          -p:DebugSymbols=false
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: KRABAK-Agent-unsigned-development
+          path: artifacts/krabak-agent-unsigned-development/
+          if-no-files-found: error
+          retention-days: 7

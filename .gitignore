@@ -12,3 +12,6 @@ __pycache__/
 *.pem
 *.key
 admin.json
+agent/windows/bin/
+agent/windows/obj/
+agent/windows/artifacts/
