@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {readAdmin,verifyPassword,makeToken,parseCookies} from './auth.mjs';
 import {createTeacher,activateTeacher,listTeachers,getTeacherForAuth,verifyTeacherPassword,disableTeacher,reissueActivation} from './accounts.mjs';
 import {canManageUsers,visibleHosts,visibleAudit} from './authorization.mjs';
-import {createAgentStore,validateAgentFrame,validateAgentInput} from './agents.mjs';
+import {AGENT_APPROVAL_TTL,createAgentStore,isAgentApprovalExpired,trustedAgentAccessEnabled,validateAgentFrame,validateAgentInput} from './agents.mjs';
 import {wsUpgrade} from './ws.mjs';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -40,7 +40,7 @@ async function readBody(req){return new Promise((resolve,reject)=>{let data='';r
 function getHostByToken(token){for(const h of hosts.values())if(h.token===token&&h.expires>now())return h;return null;}
 function accountIsActive(email){const normalized=String(email||'').toLowerCase();const admin=readAdmin();return admin?.email?.toLowerCase()===normalized||!!getTeacherForAuth(normalized);}
 function rotateAgentPairingCode(host){if(host.code)hosts.delete(host.code);let code;do{code=randomCode()}while(hosts.has(code));host.code=code;host.expires=now()+CODE_TTL;hosts.set(code,host);send(host.ws,{type:'pairing-code',code,expiresAt:new Date(host.expires).toISOString()});}
-function cleanup(){for(const [k,v] of sessions)if(v.expires<now())sessions.delete(k);for(const host of agentsOnline.values())if(host.expires<now()&&host.ws&&!host.ws.closed)rotateAgentPairingCode(host);for(const [k,v] of hosts)if(v.expires<now()&&!v.activeSession&&!v.agent)hosts.delete(k);for(const [k,v] of connections)if(v.expires<now())endSession(k,'Expired session');}
+function cleanup(){for(const [k,v] of sessions)if(v.expires<now())sessions.delete(k);for(const host of agentsOnline.values())if(host.expires<now()&&host.ws&&!host.ws.closed)rotateAgentPairingCode(host);for(const [k,v] of hosts)if(v.expires<now()&&!v.activeSession&&!v.agent)hosts.delete(k);for(const [k,v] of connections){if(v.expires<now())endSession(k,'Expired session');else if(isAgentApprovalExpired(v,now()))endSession(k,'Approval expired');}}
 function send(conn,message){if(conn&&!conn.closed)conn.send(message);}
 function endSession(id,reason='Ended by participant',actorEmail=null){const s=connections.get(id);if(!s)return;connections.delete(id);send(s.host.ws,{type:'ended',sessionId:id,reason});send(s.viewerWS,{type:'ended',sessionId:id,reason});s.host.activeSession=null;addAudit('session','ปิดการเชื่อมต่อ',s.host.name,actorEmail,[s.host.ownerEmail,s.viewer]);}
 function revokeHost(h){if(h.activeSession)endSession(h.activeSession,'Host revoked',h.ownerEmail);hosts.delete(h.code);if(h.agent)agentsOnline.delete(h.id);if(h.ws){send(h.ws,{type:'ended',reason:'Host revoked'});h.ws.close();}addAudit('host','ยกเลิกการแชร์',h.name,h.ownerEmail,[h.ownerEmail]);}
@@ -52,6 +52,7 @@ async function handleApi(req,res,pathname){
  if(method!=='GET'){if(!originAllowed(req))return reject(res,403,'Origin not allowed');if(req.headers['content-type']?.split(';')[0]!=='application/json')return reject(res,415,'JSON body required');try{body=await readBody(req)}catch(err){return reject(res,400,err.message)}if(!body||typeof body!=='object'||Array.isArray(body))return reject(res,400,'JSON object required')}
  if(pathname==='/api/agents/enroll'&&method==='POST'){
   const ip=getIP(req);if(!rate(agentActivations,ip,8,15*60_000))return reject(res,429,'Too many Agent activation attempts');
+  if(body.trustedAccess===true&&!trustedAgentAccessEnabled())return reject(res,403,'Trusted same-account control is disabled until MFA and security review are complete');
   const activated=agentStore.activateEnrollment(body.code,body.name,body.trustedAccess);if(!activated)return reject(res,400,'Invalid or expired Agent enrollment code');
   if(!accountIsActive(activated.device.ownerEmail)){agentStore.revoke(activated.device.id,activated.device.ownerEmail);return reject(res,400,'Invalid or expired Agent enrollment code');}
   addAudit('agent','ลงทะเบียน Windows Agent',activated.device.name,activated.device.ownerEmail,[activated.device.ownerEmail]);
@@ -113,7 +114,7 @@ async function handleApi(req,res,pathname){
  }
  if(pathname==='/api/hosts'&&method==='GET'){
    const current=[...hosts.values()].filter(host=>!host.agent&&host.expires>now()&&host.ws&&!host.ws.closed).map(host=>({id:host.id,name:host.name,ownerEmail:host.ownerEmail,online:true,sessionActive:!!host.activeSession,type:'browser'}));
-   const devices=agentStore.list(user.email,canManageUsers(user)).map(device=>{const online=agentsOnline.get(device.id);return {...device,type:'agent',online:!!online,sessionActive:!!online?.activeSession};});
+   const devices=agentStore.list(user.email,canManageUsers(user)).map(device=>{const online=agentsOnline.get(device.id);return {...device,trustedAccess:trustedAgentAccessEnabled()&&device.trustedAccess,type:'agent',online:!!online,sessionActive:!!online?.activeSession};});
    return json(res,200,{hosts:visibleHosts([...current,...devices],user)});
  }
  if(pathname==='/api/audit'&&method==='GET')return json(res,200,{events:visibleAudit(audit,user).slice(0,60)});
@@ -123,11 +124,11 @@ async function handleApi(req,res,pathname){
    }
    let h=null;let directAgent=false;
    if(typeof body.deviceId==='string'){
-    const device=agentStore.findById(body.deviceId);if(!device)return reject(res,404,'Agent not found');if(device.ownerEmail!==user.email||!device.trustedAccess)return reject(res,403,'Agent access requires the device owner and trusted access');
+    const device=agentStore.findById(body.deviceId);if(!device)return reject(res,404,'Agent not found');if(device.ownerEmail!==user.email||!device.trustedAccess||!trustedAgentAccessEnabled())return reject(res,403,'Agent access requires the device owner and trusted access');
     h=agentsOnline.get(device.id)||null;directAgent=true;
    }else h=hosts.get(clean(body.code).toUpperCase());
    if(!h||(!directAgent&&h.expires<now())||!h.ws||h.ws.closed)return reject(res,404,'รหัสไม่ถูกต้อง หมดอายุ หรือเครื่องปลายทางออฟไลน์');if(h.activeSession)return reject(res,409,'This host is in a session');if(h.paired&&!h.agent)return reject(res,409,'Pairing code already used; register a new code');
-   const approved=!!(directAgent&&h.agent&&h.ownerEmail===user.email&&h.trustedAccess);const id=crypto.randomUUID();const session={id,host:h,viewer:user.email,viewerWS:null,approved,created:now(),expires:now()+2*3600_000,pendingViewerSignals:[],frameWindowStart:0,frameCount:0,inputWindowStart:0,inputCount:0};connections.set(id,session);h.activeSession=id;if(!h.agent)h.paired=true;
+   const approved=!!(directAgent&&h.agent&&h.ownerEmail===user.email&&h.trustedAccess);const id=crypto.randomUUID();const session={id,host:h,viewer:user.email,viewerWS:null,approved,approvalExpires:h.agent&&!approved?now()+AGENT_APPROVAL_TTL:null,created:now(),expires:now()+2*3600_000,pendingViewerSignals:[],frameWindowStart:0,frameCount:0,inputWindowStart:0,inputCount:0};connections.set(id,session);h.activeSession=id;if(!h.agent)h.paired=true;
    if(approved)send(h.ws,{type:'agent-session-start',sessionId:id,requester:user.email});else send(h.ws,{type:'invite',sessionId:id,requester:user.email});
    addAudit('session',approved?'เริ่มเซสชันอุปกรณ์ที่เชื่อถือ':'ร้องขอการเชื่อมต่อ',h.name,user.email,[user.email,h.ownerEmail]);return json(res,201,{id,hostName:h.name,status:approved?'approved':'pending',agent:!!h.agent,rtcConfig:sessionIceConfig()});
  }
@@ -140,7 +141,7 @@ function handleWebSocket(req,socket,head){
  ws.on('message',msg=>{lastAt=now();const type=msg?.type;
   if(type==='agent-hello'&&!role){
    const device=agentStore.authenticate(msg.token);if(!device||!accountIsActive(device.ownerEmail)){send(ws,{type:'error',error:'Agent was revoked or account disabled'});ws.close();return;}if(agentsOnline.get(device.id)?.ws&&!agentsOnline.get(device.id).ws.closed){send(ws,{type:'error',error:'Agent is already connected'});ws.close();return;}
-   host={id:device.id,deviceId:device.id,agent:true,name:device.name,ownerEmail:device.ownerEmail,trustedAccess:device.trustedAccess,code:'',expires:0,ws,activeSession:null,paired:false};role='agent';agentsOnline.set(device.id,host);rotateAgentPairingCode(host);send(ws,{type:'agent-hello-ok',deviceId:device.id,pairingCode:host.code,expiresAt:new Date(host.expires).toISOString()});return;
+   host={id:device.id,deviceId:device.id,agent:true,name:device.name,ownerEmail:device.ownerEmail,trustedAccess:trustedAgentAccessEnabled()&&device.trustedAccess,code:'',expires:0,ws,activeSession:null,paired:false};role='agent';agentsOnline.set(device.id,host);rotateAgentPairingCode(host);send(ws,{type:'agent-hello-ok',deviceId:device.id,pairingCode:host.code,expiresAt:new Date(host.expires).toISOString()});return;
   }
   if(type==='host-hello'&&!role){host=getHostByToken(msg.token);if(!host||host.ws&&!host.ws.closed){ws.send({type:'error',error:'Invalid or already connected host'});ws.close();return;}role='host';host.ws=ws;send(ws,{type:'host-hello-ok'});return;}
   if(type==='viewer-hello'&&!role){viewer=getUser(req);viewerToken=parseCookies(req.headers.cookie).krabak_session;if(!viewer){send(ws,{type:'error',error:'Login required'});ws.close();return;}role='viewer';ws.sessionToken=viewerToken;let owned=userSockets.get(viewer.email);if(!owned){owned=new Set();userSockets.set(viewer.email,owned);}owned.add(ws);send(ws,{type:'viewer-hello-ok'});return;}
@@ -153,7 +154,7 @@ function handleWebSocket(req,socket,head){
   const isHost=(role==='host'||role==='agent')&&session.host===host;
   const isViewer=role==='viewer'&&session.viewer===viewer.email&&session.viewerWS===ws;
   if(!isHost&&!isViewer)return;
-  if(type==='accept'&&isHost&&!session.approved){session.approved=true;send(session.viewerWS,{type:'accepted',sessionId:id});if(role==='agent')send(ws,{type:'agent-session-approved',sessionId:id});addAudit('session','อนุมัติการแชร์ภาพ',host.name,host.ownerEmail,[host.ownerEmail,session.viewer]);return;}
+  if(type==='accept'&&isHost&&!session.approved){if(isAgentApprovalExpired(session,now())){endSession(id,'Approval expired',host.ownerEmail);return;}session.approved=true;send(session.viewerWS,{type:'accepted',sessionId:id});if(role==='agent')send(ws,{type:'agent-session-approved',sessionId:id});addAudit('session','อนุมัติการแชร์ภาพ',host.name,host.ownerEmail,[host.ownerEmail,session.viewer]);return;}
   if(type==='reject'&&isHost&&!session.approved){endSession(id,'Host rejected',host.ownerEmail);return;}
   if(type==='end'){endSession(id,'Participant ended',isHost?host.ownerEmail:viewer.email);return;}
   if(!session.approved)return;

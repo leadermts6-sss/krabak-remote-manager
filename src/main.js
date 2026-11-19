@@ -93,7 +93,11 @@ function hostRow(host) {
   if (host.type === 'agent') return '<div class="device-row"><div class="dev-mark">' + icon('monitor', 19) + '</div><div class="device-row-meta">' +
     '<div class="device-row-title"><strong>' + e(host.name) + '</strong><i class="status-dot ' + (host.online ? '' : 'offline') + '"></i></div>' +
     '<div class="dev-desc"><span>Windows Agent</span><span>·</span><span>' + (host.online ? (host.sessionActive ? 'กำลังควบคุม' : 'พร้อมเชื่อมต่อ') : 'ออฟไลน์') + '</span></div></div>' +
-    (host.online && host.ownerEmail === state.account?.email ? btn('ควบคุม', 'connect-device', 'btn btn-xs btn-primary', 'data-device-id="' + e(host.id) + '"') : '') +
+    (host.online && host.ownerEmail === state.account?.email
+      ? (host.trustedAccess
+        ? btn('ควบคุม', 'connect-device', 'btn btn-xs btn-primary', 'data-device-id="' + e(host.id) + '"')
+        : '<span class="device-row-extra">ต้องใช้รหัสจับคู่และอนุมัติที่เครื่อง</span>')
+      : '') +
     btn('เพิกถอน', 'revoke-agent', 'btn btn-xs btn-danger', 'data-device-id="' + e(host.id) + '"') + '</div>';
   return '<div class="device-row"><div class="dev-mark">' + icon('monitor', 19) + '</div><div class="device-row-meta">' +
     '<div class="device-row-title"><strong>' + e(host.name) + '</strong><i class="status-dot"></i></div>' +
@@ -128,7 +132,7 @@ function dashboardPage() {
   const agents = state.devices.filter(host => host.type === 'agent');
   const onlineAgents = agents.filter(host => host.online).length;
   const controlLabel = onlineAgents ? 'Agent ออนไลน์' : (agents.length ? 'Agent ออฟไลน์' : 'ยังไม่ได้ติดตั้ง Agent');
-  const controlCount = agents.length ? `${onlineAgents}/${agents.length}<small>เครื่อง</small>` : 'ต้องใช้ Agent';
+  const controlCount = agents.length ? `${onlineAgents}/${agents.length}<small>เครื่อง</small>` : '<small>ติดตั้ง Agent บน Windows เป้าหมายก่อนควบคุม</small>';
   const actions = btn(icon('plus') + ' เพิ่ม Windows Agent', 'enroll-agent') + btn(icon('share') + ' แชร์ผ่านเบราว์เซอร์', 'go-host') + btn(icon('link') + ' เชื่อมต่อด้วยรหัส', 'connect-code', 'btn btn-primary');
   const deviceItems = state.devices.length ? state.devices.slice(0, 5).map(hostRow).join('') :
     emptyState('ยังไม่มีอุปกรณ์ออนไลน์', 'เมื่อเครื่องของคุณเปิดหน้าแชร์และเชื่อมต่อแล้ว รายการจริงจะแสดงที่นี่', btn(icon('share') + ' แชร์เครื่องนี้', 'go-host', 'btn btn-primary'));
@@ -136,7 +140,7 @@ function dashboardPage() {
     emptyState('ยังไม่มีประวัติกิจกรรม', 'เหตุการณ์จริงจะแสดงเมื่อมีการเข้าสู่ระบบหรือเริ่มเซสชัน');
   return '<div class="content">' + header('WORKSPACE', 'ภาพรวม', 'ดูอุปกรณ์ที่กำลังออนไลน์และกิจกรรมของบัญชีนี้', actions) +
     '<section class="hero"><div class="hero-copy"><span class="hero-badge">' + icon('shield', 14) +
-    ' SECURE REMOTE WORKSPACE</span><h2>เชื่อมต่ออุปกรณ์ของคุณ</h2><p>เฉพาะอุปกรณ์จริงที่บัญชีนี้มีสิทธิ์จะอยู่ในรายการ Browser Host ต้องอนุญาตทุกครั้ง ส่วน Windows Agent ใช้การตั้งค่าความเชื่อถือของเครื่องและขออนุญาตเมื่อเชื่อมจากบัญชีอื่น</p>' +
+    ' SECURE REMOTE WORKSPACE</span><h2>เชื่อมต่ออุปกรณ์ของคุณ</h2><p>เฉพาะอุปกรณ์จริงที่บัญชีนี้มีสิทธิ์จะอยู่ในรายการ Browser Host ต้องอนุญาตทุกครั้ง ส่วน Windows Agent ต้องติดตั้งบนเครื่องเป้าหมายและรับคำขอที่เครื่องทุกครั้ง เว้นแต่เปิด trusted access หลัง MFA และ security review</p>' +
     '<div class="head-buttons">' + btn(icon('share') + ' เริ่มแชร์หน้าจอ', 'go-host', 'btn btn-primary') +
     btn(icon('plus') + ' ใส่รหัสจับคู่', 'connect-code', 'btn') + '</div></div><div class="hero-graphic" aria-hidden="true"><div class="hg-monitor hg-main"><div class="hg-toolbar"><i></i><i></i><i></i></div><div class="hg-shapes"><div></div><div></div></div></div></div></section>' +
     '<section class="stats"><div class="stat"><div class="stat-top"><div class="stat-icon">' + icon('monitor') +
@@ -176,7 +180,7 @@ function remotePage() {
   let panel = '';
   if (isAgent) panel = '<div class="right-body"><h3>Windows Agent</h3><div class="detail-row"><span>เครื่อง</span><strong>' + e(state.liveSession.hostName) + '</strong></div>' +
     '<div class="detail-row"><span>สถานะ</span><strong>' + e(state.connection) + '</strong></div><div class="remote-help">การควบคุมส่งเมาส์และแป้นพิมพ์จริงผ่าน Agent ที่ติดตั้งบน Windows · หยุดได้จากหน้าต่าง Agent ที่เครื่องปลายทาง</div>' +
-    '<p class="remote-help">โหมดสัมผัสแปลงการแตะ/ลากเป็นเมาส์ Windows · ใช้งานไม่ได้บนหน้าจอ UAC หรือหน้าจอเข้าสู่ระบบ</p></div>';
+    '<p class="remote-help">โหมดสัมผัสแปลงการแตะ/ลากเป็นคลิกและลากด้วยเมาส์ Windows ไม่ใช่การสัมผัส native หรือหลายจุด · ใช้งานไม่ได้บนหน้าจอ UAC หรือหน้าจอเข้าสู่ระบบ</p></div>';
   else if (state.right === 'chat') panel = '<div class="right-body"><div class="remote-help">ข้อความในเซสชันนี้จะเห็นได้เฉพาะผู้เข้าร่วม</div><div id="chat-messages" class="chat-messages">' + chat + '</div></div>' +
     '<form id="chat-form" class="chat-compose"><input id="chat-input" name="message" aria-label="ข้อความ" placeholder="พิมพ์ข้อความ…" autocomplete="off"/><button aria-label="ส่งข้อความ" type="submit">' + icon('arrow', 15) + '</button></form>';
   else if (state.right === 'files') panel = '<div class="right-body"><button class="file-zone" data-act="send-file">' + icon('upload', 24) +
@@ -190,12 +194,12 @@ function remotePage() {
     btn(icon('back', 14) + ' กลับอุปกรณ์', 'go-devices') + btn(icon('power', 14) + ' จบการเชื่อมต่อ', 'end-live', 'btn btn-danger') + '</div></div>' +
     '<div class="remote-layout"><section class="remote-stage" id="remote-stage"><div class="stage-top"><div class="stage-title">' +
     icon('monitor', 14) + ' LIVE · ' + e(state.liveSession.hostName) + '</div><div class="stage-control">' +
-    (isAgent ? '<div class="agent-mode-control" role="group" aria-label="โหมดควบคุม"><button class="tool-button ' + (state.agentMode === 'mouse' ? 'active' : '') + '" aria-pressed="' + (state.agentMode === 'mouse') + '" data-act="agent-mode-mouse">เมาส์</button><button class="tool-button ' + (state.agentMode === 'touch' ? 'active' : '') + '" aria-pressed="' + (state.agentMode === 'touch') + '" data-act="agent-mode-touch">สัมผัส</button></div>' : '') +
+    (isAgent ? '<div class="agent-mode-control" role="group" aria-label="โหมดควบคุม"><button class="tool-button ' + (state.agentMode === 'mouse' ? 'active' : '') + '" aria-pressed="' + (state.agentMode === 'mouse') + '" data-act="agent-mode-mouse">เมาส์</button><button class="tool-button ' + (state.agentMode === 'touch' ? 'active' : '') + '" aria-pressed="' + (state.agentMode === 'touch') + '" data-act="agent-mode-touch" title="แปลงท่าทางแตะเป็นเมาส์ ไม่ใช่ Windows native touch">ทัชแพด</button></div>' : '') +
     btn(icon('sliders', 14), 'quality', 'tool-button', 'aria-label="คุณภาพภาพ"') + btn(icon('expand', 14), 'fullscreen', 'tool-button', 'aria-label="เต็มหน้าจอ"') + '</div></div>' +
     '<div class="stage-body" id="remote-stage-body"><div class="capture-frame' + (isAgent ? '' : '') + '" id="live-placeholder">' + icon('video', 40) +
     '<div>' + (isAgent ? 'รอ Windows Agent ส่งภาพ' : 'กำลังรอภาพจาก Host') + '<br/><small>' + (isAgent ? 'ภาพจะแสดงเมื่อเซสชันได้รับอนุญาต' : 'Host ต้องอนุมัติและเลือกแหล่งแชร์') + '</small></div></div>' +
     (isAgent ? '<img id="agent-screen" class="fit-video agent-screen hidden" alt="หน้าจอ Windows ที่แชร์" draggable="false" tabindex="0" width="1280" height="720"/>' : '<video id="live-video" class="fit-video hidden" autoplay playsinline></video>') + '</div>' +
-    '<div class="stage-bottom"><span>' + icon('wifi', 12) + (isAgent ? ' WSS Agent' : ' WebRTC') + '</span><span>' + (isAgent ? 'Windows จริง · ' + (state.agentMode === 'touch' ? 'โหมดสัมผัส' : 'โหมดเมาส์') : 'ดูภาพเท่านั้น') + ' · ' + state.zoom + '%</span><span>' + icon('shield', 12) + ' ต้องได้รับอนุญาต</span></div>' +
+    '<div class="stage-bottom"><span>' + icon('wifi', 12) + (isAgent ? ' WSS Agent' : ' WebRTC') + '</span><span>' + (isAgent ? 'Windows จริง · ' + (state.agentMode === 'touch' ? 'ท่าทางทัชแพด → เมาส์' : 'โหมดเมาส์') : 'ดูภาพเท่านั้น') + ' · ' + state.zoom + '%</span><span>' + icon('shield', 12) + ' ต้องได้รับอนุญาต</span></div>' +
     '<div class="stage-tools">' + btn(icon('expand', 14) + ' พอดีหน้าจอ', 'fit', 'tool-button') + btn('−', 'zoom-out', 'tool-button', 'aria-label="ย่อภาพ"') +
     btn('+', 'zoom-in', 'tool-button', 'aria-label="ขยายภาพ"') + (isAgent ? '' : btn(icon('chat', 14) + ' แชต', 'tab-chat', 'tool-button') +
     btn(icon('files', 14) + ' ไฟล์', 'tab-files', 'tool-button')) + '</div></section><aside class="panel right-panel"><div class="right-tab">' +

@@ -6,6 +6,13 @@ const ENROLLMENT_TTL = 10 * 60_000;
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const TOKEN_RE = /^[A-Za-z0-9_-]{40,50}$/;
 const MAX_AGENT_FRAME_CHARS = 900_000;
+const configuredApprovalTtl = Number(process.env.KRABAK_AGENT_APPROVAL_TTL_MS);
+export const AGENT_APPROVAL_TTL = Number.isInteger(configuredApprovalTtl)
+  && configuredApprovalTtl >= 1_000 && configuredApprovalTtl <= 60_000
+  ? configuredApprovalTtl : 60_000;
+export function trustedAgentAccessEnabled(env = process.env) {
+  return env.KRABAK_AGENT_TRUSTED_ACCESS_ENABLED === '1';
+}
 const ALLOWED_KEYS = new Set([
   0x08, 0x09, 0x0d, 0x10, 0x11, 0x12, 0x1b, 0x20,
   0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2d, 0x2e,
@@ -17,6 +24,11 @@ const ALLOWED_KEYS = new Set([
 ]);
 
 const isCoordinate = value => Number.isInteger(value) && value >= 0 && value <= 65_535;
+
+export function isAgentApprovalExpired(session, currentTime = Date.now()) {
+  return !!session?.host?.agent && !session.approved
+    && Number.isFinite(session.approvalExpires) && session.approvalExpires <= currentTime;
+}
 
 export function validateAgentInput(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null;

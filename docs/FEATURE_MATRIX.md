@@ -12,7 +12,7 @@
 | ดูภาพ | ทำงาน | WebRTC ผ่าน STUN; NAT บางแบบต้องมี TURN |
 | Windows Agent | รุ่นทดลอง / ยัง unsigned | Source และ local x64 build ผ่าน; ยังไม่ทดสอบ session จริงกับเครื่องเป้าหมาย; ต้องติดตั้งและลงทะเบียนก่อน |
 | ควบคุมเมาส์/คีย์บอร์ด Windows | มี implementation; ยังไม่ยืนยัน E2E | Agent ส่ง input จริงผ่าน allowlist; ใช้บัญชี Windows ปัจจุบัน; อาจควบคุม secure/UAC desktop หรือโปรแกรมที่ยกระดับสิทธิ์ไม่ได้ |
-| อนุมัติเซสชัน | ทำงานตามนโยบาย Agent | บัญชีเดียวกันเชื่อมตรงได้เมื่อเปิด trusted access บน Agent; บัญชีอื่นต้องอนุญาตจากหน้าต่าง native บน Windows |
+| อนุมัติเซสชัน | ทำงานตามนโยบาย Agent | บัญชีเดียวกันเชื่อมตรงได้เมื่อเลือก trust บน Agent และเปิด server flag หลัง MFA/security review; ค่าเริ่มต้นให้ทุก session รอการอนุญาตจาก Windows |
 | สลับ/แสดงหลายจอจริง | จำกัด | Host เลือก source ได้ทีละรายการผ่าน Browser picker |
 | แชต | ทำงานในเซสชัน | WebSocket; ข้อมูลไม่เก็บเป็นประวัติถาวร |
 | ส่งไฟล์ | ทำงานในเซสชัน | WebRTC DataChannel สูงสุด 8 MB; ผู้รับเลือกบันทึกเอง |

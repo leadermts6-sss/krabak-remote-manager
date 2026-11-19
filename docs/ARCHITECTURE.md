@@ -34,7 +34,7 @@ Host อยู่ในระบบและเชื่อม WebSocket ขณ�
 Source ปัจจุบันอยู่ใน `agent/windows/` และ CI สร้าง x64 development artifact แบบ unsigned แยกจาก web release การควบคุม Windows จริงต้องติดตั้ง Agent บนทุกเครื่องเป้าหมาย:
 
 1. .NET 10 WinForms user-mode Agent เลือกจอหนึ่งจอและส่ง JPEG ผ่าน WSS; ใช้ Win32 SendInput สำหรับเมาส์/คีย์บอร์ด allowlist
-2. Same-account direct access ต้องเปิด trusted access เองบน Agent; cross-account pairing แสดงหน้าต่าง native ขออนุญาต และมี Stop window ระหว่างเซสชัน
+2. Same-account direct access ต้องเลือก trusted access บน Agent และเปิด server flag `KRABAK_AGENT_TRUSTED_ACCESS_ENABLED=1`; flag ถูกปิดเป็นค่าเริ่มต้นและห้ามเปิดก่อน MFA/security review. Cross-account pairing แสดงหน้าต่าง native ขออนุญาต และมี Stop window ระหว่างเซสชัน
 3. Agent token ใช้ DPAPI ของบัญชี Windows ปัจจุบัน; ไม่ยกระดับสิทธิ์, ไม่สร้าง auto-start, ไม่เข้าถึง UAC/secure desktop
 4. ยังต้องทำ MFA, security review, code-signing และ signed installer ก่อน production
 5. Window capture, หลายจอพร้อมกัน, native touchscreen, clipboard, file transfer, updater และ service mode ยังเป็นงานระยะถัดไป

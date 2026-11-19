@@ -335,8 +335,15 @@ internal sealed class AgentClient : IAsyncDisposable
     private static Uri ValidateServerUrl(string value)
     {
         if (!Uri.TryCreate(value.Trim().TrimEnd('/'), UriKind.Absolute, out var uri)) throw new InvalidOperationException("กรุณากรอก URL เซิร์ฟเวอร์ให้ถูกต้อง");
-        var localHttp = uri.Scheme == "http" && (uri.IsLoopback || uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase));
-        if (uri.Scheme != "https" && !localHttp) throw new InvalidOperationException("Agent ต้องเชื่อมต่อผ่าน HTTPS; HTTP ใช้ได้เฉพาะ localhost สำหรับทดสอบ");
+        if (!string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query)
+            || !string.IsNullOrEmpty(uri.Fragment) || uri.AbsolutePath != "/")
+            throw new InvalidOperationException("กรุณากรอกเฉพาะ URL หลักของเซิร์ฟเวอร์ โดยไม่มี path หรือข้อมูลต่อท้าย");
+        var production = uri.Scheme == "https"
+            && uri.IdnHost.Equals("remote.krabak.ac.th", StringComparison.OrdinalIgnoreCase)
+            && uri.Port == 443;
+        var localDevelopment = uri.IsLoopback && (uri.Scheme == "http" || uri.Scheme == "https");
+        if (!production && !localDevelopment)
+            throw new InvalidOperationException("Agent อนุญาตเฉพาะ https://remote.krabak.ac.th หรือ localhost สำหรับทดสอบ เพื่อป้องกันการส่งรหัสลงทะเบียนไปยังเซิร์ฟเวอร์อื่น");
         return new Uri(uri.GetLeftPart(UriPartial.Authority));
     }
 }

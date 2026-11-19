@@ -22,7 +22,7 @@ internal sealed class ConsentDialog : Form
         };
         var details = new Label
         {
-            Text = $"บัญชี {requester} ขอภาพหน้าจอและสิทธิ์เมาส์/แป้นพิมพ์ Windows\n\nอนุญาตเฉพาะเมื่อคุณรู้จักผู้ใช้รายนี้ การอนุญาตจะเริ่มแชร์จอที่เลือกไว้ทันที",
+            Text = $"บัญชี {requester} ขอภาพหน้าจอและสิทธิ์เมาส์/แป้นพิมพ์ Windows\n\nอนุญาตเฉพาะเมื่อคุณรู้จักผู้ใช้รายนี้ คำขอหมดอายุใน 60 วินาที",
             Font = new Font("Segoe UI", 10),
             AutoSize = false,
             Location = new Point(24, 66),
@@ -30,6 +30,10 @@ internal sealed class ConsentDialog : Form
         };
         var deny = new Button { Text = "ปฏิเสธ", DialogResult = DialogResult.No, Size = new Size(120, 42), Location = new Point(162, 170) };
         var allow = new Button { Text = "อนุญาตควบคุม", DialogResult = DialogResult.Yes, Size = new Size(150, 42), Location = new Point(288, 170) };
+        var timeout = new System.Windows.Forms.Timer { Interval = 60_000 };
+        timeout.Tick += (_, _) => { DialogResult = DialogResult.No; Close(); };
+        Shown += (_, _) => timeout.Start();
+        FormClosed += (_, _) => timeout.Dispose();
         Controls.AddRange([title, details, deny, allow]);
         AcceptButton = allow;
         CancelButton = deny;

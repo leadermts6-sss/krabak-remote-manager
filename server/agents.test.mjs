@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createAgentStore, validateAgentFrame, validateAgentInput } from './agents.mjs';
+import { createAgentStore, isAgentApprovalExpired, trustedAgentAccessEnabled, validateAgentFrame, validateAgentInput } from './agents.mjs';
 
 async function withStore(run, now = () => Date.now()) {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'krabak-agent-test-'));
@@ -74,4 +74,18 @@ test('Agent screen relay rejects malformed, excessive, and out-of-range frames',
   assert.equal(validateAgentFrame('a'.repeat(950_000), 640, 360), false);
   assert.equal(validateAgentFrame('aGVsbG8=', 0, 360), false);
   assert.equal(validateAgentFrame('aGVsbG8=', 4000, 2160), false);
+});
+
+test('only unanswered Agent consent requests expire at their deadline', () => {
+  const pending = { host: { agent: true }, approved: false, approvalExpires: 60_000 };
+  assert.equal(isAgentApprovalExpired(pending, 59_999), false);
+  assert.equal(isAgentApprovalExpired(pending, 60_000), true);
+  assert.equal(isAgentApprovalExpired({ ...pending, approved: true }, 60_000), false);
+  assert.equal(isAgentApprovalExpired({ ...pending, host: { agent: false } }, 60_000), false);
+});
+
+test('trusted same-account Agent control requires an explicit server policy flag', () => {
+  assert.equal(trustedAgentAccessEnabled({}), false);
+  assert.equal(trustedAgentAccessEnabled({ KRABAK_AGENT_TRUSTED_ACCESS_ENABLED: 'true' }), false);
+  assert.equal(trustedAgentAccessEnabled({ KRABAK_AGENT_TRUSTED_ACCESS_ENABLED: '1' }), true);
 });

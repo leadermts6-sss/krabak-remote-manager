@@ -49,4 +49,7 @@ test('Windows Agent dashboard status reflects actual enrolled devices', async ()
   assert.match(source, /Agent ออฟไลน์/);
   assert.match(source, /Agent ออนไลน์/);
   assert.match(source, /เพิ่ม Windows Agent/);
+  assert.match(source, /host\.trustedAccess[\s\S]{0,140}connect-device/, 'the list view must not offer direct control when trusted access is off');
+  assert.match(source, /ทัชแพด/);
+  assert.match(source, /ไม่ใช่การสัมผัส native/);
 });

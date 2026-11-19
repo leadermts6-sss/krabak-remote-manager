@@ -29,7 +29,7 @@ before(async () => {
   await writeFile(path.join(dataDir, 'admin.json'), JSON.stringify(adminRecord), { mode: 0o600 });
   child = spawn(process.execPath, [serverEntry], {
     cwd: projectRoot,
-    env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), KRABAK_DATA_DIR: dataDir, KRABAK_PUBLIC_ORIGIN: origin },
+    env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), KRABAK_DATA_DIR: dataDir, KRABAK_PUBLIC_ORIGIN: origin, KRABAK_AGENT_TRUSTED_ACCESS_ENABLED: '0', KRABAK_AGENT_APPROVAL_TTL_MS: '1500' },
     stdio: ['ignore', 'ignore', 'ignore'],
   });
   let ready = false;
@@ -84,6 +84,16 @@ async function login(email, password) {
   assert.equal(response.status, 200, 'valid credentials should create a session');
   assert.ok(response.cookie, 'login should return a session cookie');
   return response.cookie;
+}
+
+async function waitForMessageAfter(socket, type, existingCount, timeoutMs = 2500) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const message = socket.messages.filter(item => item.type === type)[existingCount];
+    if (message) return message;
+    await wait(10);
+  }
+  throw new Error('Timed out waiting for a new WebSocket message: ' + type);
 }
 
 async function createPending(email) {
@@ -378,38 +388,71 @@ test('Windows Agent enrollment, same-owner access, foreign approval, relay limit
   assert.equal(enrollment.status, 201);
   assert.match(enrollment.payload.code, /^[A-Za-z0-9_-]{40,50}$/);
 
-  const activated = await api('/api/agents/enroll', {
+  const blockedActivation = await api('/api/agents/enroll', {
     method: 'POST',
     body: { code: enrollment.payload.code, name: 'Agent Owner PC', trustedAccess: true },
   });
-  assert.equal(activated.status, 201);
-  assert.match(activated.payload.token, /^[A-Za-z0-9_-]{40,50}$/);
+  assert.equal(blockedActivation.status, 403, 'trusted access is blocked unless the server policy is explicitly enabled');
+  assert.match(blockedActivation.payload.error, /MFA and security review/);
+  const registered = await api('/api/agents/enroll', {
+    method: 'POST',
+    body: { code: enrollment.payload.code, name: 'Agent Owner PC', trustedAccess: false },
+  });
+  assert.equal(registered.status, 201, 'the rejected trust choice must leave the one-time enrollment usable');
+  const activatedResult = registered;
+  assert.match(activatedResult.payload.token, /^[A-Za-z0-9_-]{40,50}$/);
   const registry = await readFile(path.join(dataDir, 'agents.json'), 'utf8');
   assert.equal(registry.includes(enrollment.payload.code), false);
-  assert.equal(registry.includes(activated.payload.token), false);
+  assert.equal(registry.includes(activatedResult.payload.token), false);
 
   const agent = await connectWebSocket();
-  agent.send({ type: 'agent-hello', token: activated.payload.token });
+  agent.send({ type: 'agent-hello', token: activatedResult.payload.token });
   const agentHello = await agent.waitFor('agent-hello-ok');
-  assert.equal(agentHello.deviceId, activated.payload.device.id);
+  assert.equal(agentHello.deviceId, activatedResult.payload.device.id);
   assert.match(agentHello.pairingCode, /^[A-F0-9]{8}$/);
 
   const ownerDevices = await api('/api/hosts', { cookie: owner.cookie });
   const guestDevices = await api('/api/hosts', { cookie: guest.cookie });
-  assert.equal(ownerDevices.payload.hosts.find(item => item.id === activated.payload.device.id)?.type, 'agent');
-  assert.equal(guestDevices.payload.hosts.some(item => item.id === activated.payload.device.id), false);
+  assert.equal(ownerDevices.payload.hosts.find(item => item.id === activatedResult.payload.device.id)?.type, 'agent');
+  assert.equal(ownerDevices.payload.hosts.find(item => item.id === activatedResult.payload.device.id)?.trustedAccess, false);
+  assert.equal(guestDevices.payload.hosts.some(item => item.id === activatedResult.payload.device.id), false);
 
   const ownerViewer = await connectWebSocket(owner.cookie);
   ownerViewer.send({ type: 'viewer-hello' });
   await ownerViewer.waitFor('viewer-hello-ok');
+  const blockedOwnerDirect = await api('/api/sessions', {
+    method: 'POST', cookie: owner.cookie, body: { deviceId: activatedResult.payload.device.id },
+  });
+  assert.equal(blockedOwnerDirect.status, 403, 'same-account direct control stays blocked without the production gate');
+  const expiredInviteCount = agent.messages.filter(item => item.type === 'invite').length;
+  const expiredEndedCount = agent.messages.filter(item => item.type === 'ended').length;
+  const expiredViewerEndedCount = ownerViewer.messages.filter(item => item.type === 'ended').length;
+  const expiredSession = await api('/api/sessions', {
+    method: 'POST', cookie: owner.cookie, body: { code: agentHello.pairingCode },
+  });
+  assert.equal(expiredSession.status, 201);
+  ownerViewer.send({ type: 'watch', sessionId: expiredSession.payload.id });
+  await waitForMessageAfter(agent, 'invite', expiredInviteCount);
+  await wait(1600);
+  agent.send({ type: 'accept', sessionId: expiredSession.payload.id });
+  await waitForMessageAfter(agent, 'ended', expiredEndedCount);
+  await waitForMessageAfter(ownerViewer, 'ended', expiredViewerEndedCount);
+  assert.equal(ownerViewer.messages.some(item => item.type === 'accepted' && item.sessionId === expiredSession.payload.id), false,
+    'an accept arriving after the deadline cannot approve the session');
+
+  const inviteCountBeforeOwnerSession = agent.messages.filter(item => item.type === 'invite').length;
   const ownerSession = await api('/api/sessions', {
-    method: 'POST', cookie: owner.cookie, body: { deviceId: activated.payload.device.id },
+    method: 'POST', cookie: owner.cookie, body: { code: agentHello.pairingCode },
   });
   assert.equal(ownerSession.status, 201);
-  assert.equal(ownerSession.payload.status, 'approved');
+  assert.equal(ownerSession.payload.status, 'pending');
   ownerViewer.send({ type: 'watch', sessionId: ownerSession.payload.id });
+  const ownerInvite = await waitForMessageAfter(agent, 'invite', inviteCountBeforeOwnerSession);
+  assert.equal(ownerInvite.requester, owner.email);
+  assert.equal(ownerViewer.messages.some(item => item.type === 'accepted'), false);
+  agent.send({ type: 'accept', sessionId: ownerSession.payload.id });
   await ownerViewer.waitFor('accepted');
-  const ownerStarted = await agent.waitFor('agent-session-start');
+  const ownerStarted = await agent.waitFor('agent-session-approved');
   assert.equal(ownerStarted.sessionId, ownerSession.payload.id);
   agent.send({ type: 'screen-frame', sessionId: ownerSession.payload.id, frame: 'aGVsbG8=', width: 640, height: 360 });
   assert.equal((await ownerViewer.waitFor('screen-frame')).width, 640);
@@ -420,21 +463,23 @@ test('Windows Agent enrollment, same-owner access, foreign approval, relay limit
   assert.equal(agent.messages.some(item => item.type === 'input' && item.input?.kind === 'exec'), false);
 
   assert.equal((await api('/api/sessions', {
-    method: 'POST', cookie: guest.cookie, body: { deviceId: activated.payload.device.id },
+    method: 'POST', cookie: guest.cookie, body: { deviceId: activatedResult.payload.device.id },
   })).status, 403);
+  const ownerEndedCount = agent.messages.filter(item => item.type === 'ended').length;
   ownerViewer.send({ type: 'end', sessionId: ownerSession.payload.id });
-  await agent.waitFor('ended');
+  await waitForMessageAfter(agent, 'ended', ownerEndedCount);
 
   const guestViewer = await connectWebSocket(guest.cookie);
   guestViewer.send({ type: 'viewer-hello' });
   await guestViewer.waitFor('viewer-hello-ok');
+  const previousInviteCount = agent.messages.filter(item => item.type === 'invite').length;
   const guestSession = await api('/api/sessions', {
     method: 'POST', cookie: guest.cookie, body: { code: agentHello.pairingCode },
   });
   assert.equal(guestSession.status, 201);
   assert.equal(guestSession.payload.status, 'pending');
   guestViewer.send({ type: 'watch', sessionId: guestSession.payload.id });
-  const invite = await agent.waitFor('invite');
+  const invite = await waitForMessageAfter(agent, 'invite', previousInviteCount);
   assert.equal(invite.requester, 'agent.guest@example.edu');
   assert.equal(guestViewer.messages.some(item => item.type === 'accepted'), false);
   agent.send({ type: 'accept', sessionId: guestSession.payload.id });
@@ -451,13 +496,14 @@ test('Windows Agent enrollment, same-owner access, foreign approval, relay limit
   });
   assert.equal(rateLimitedPair.status, 429);
 
-  const revoked = await api('/api/agents/' + activated.payload.device.id + '/revoke', {
+  const revokeEndedCount = guestViewer.messages.filter(item => item.type === 'ended').length;
+  const revoked = await api('/api/agents/' + activatedResult.payload.device.id + '/revoke', {
     method: 'POST', cookie: owner.cookie, body: {},
   });
   assert.equal(revoked.status, 200);
   await agent.waitForClose();
-  await guestViewer.waitFor('ended');
-  assert.equal((await api('/api/hosts', { cookie: owner.cookie })).payload.hosts.some(item => item.id === activated.payload.device.id), false);
+  await waitForMessageAfter(guestViewer, 'ended', revokeEndedCount);
+  assert.equal((await api('/api/hosts', { cookie: owner.cookie })).payload.hosts.some(item => item.id === activatedResult.payload.device.id), false);
 
   ownerViewer.close();
   guestViewer.close();
