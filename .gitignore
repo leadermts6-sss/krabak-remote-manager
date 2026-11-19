@@ -11,6 +11,8 @@ __pycache__/
 *.py[cod]
 *.pem
 *.key
+*.p12
+*.pfx
 admin.json
 agent/windows/bin/
 agent/windows/obj/

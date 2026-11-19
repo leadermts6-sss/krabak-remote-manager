@@ -1,6 +1,7 @@
 {
   "name": "krabak-remote-manager",
   "version": "0.1.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "KRABAK Remote Manager — PWA + live consent-based browser window/screen sharing",
