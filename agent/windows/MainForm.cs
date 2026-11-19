@@ -71,7 +71,12 @@ internal sealed class MainForm : Form
         _revoke.Text = "เพิกถอนและลบข้อมูลเครื่องนี้"; _revoke.SetBounds(204, 483, 220, 42); Controls.Add(_revoke);
         _status.SetBounds(26, 536, 508, 24); _status.AutoEllipsis = true; _status.Text = "ยังไม่ได้ลงทะเบียน"; Controls.Add(_status);
         _pairingCode.SetBounds(26, 561, 508, 28); _pairingCode.Font = new Font("Segoe UI", 11, FontStyle.Bold); _pairingCode.Text = "รหัสจับคู่: —"; Controls.Add(_pairingCode);
-        var note = new Label { Text = "รุ่นทดลอง unsigned และยังไม่มี MFA · ใช้ทดสอบกับเครื่องส่วนตัวเท่านั้น · ไม่มีการเพิ่ม auto-start · ปิดหน้าต่างเพื่อซ่อนไปที่ system tray", AutoSize = false, Location = new Point(26, 590), Size = new Size(510, 32), ForeColor = Color.DimGray };
+#if AGENT_PRODUCTION
+        var distributionNote = "Production build · บัญชีเว็บต้องยืนยัน MFA · คำขอจากบัญชีอื่นต้องอนุมัติบนเครื่อง";
+#else
+        var distributionNote = "Development build · ไฟล์ยังไม่ได้ลงลายเซ็นดิจิทัล · ใช้เฉพาะทดสอบ";
+#endif
+        var note = new Label { Text = distributionNote + " · ไม่มี auto-start · ปิดหน้าต่างเพื่อซ่อนไปที่ system tray", AutoSize = false, Location = new Point(26, 590), Size = new Size(510, 32), ForeColor = Color.DimGray };
         Controls.Add(note);
 
         var menu = new ContextMenuStrip();

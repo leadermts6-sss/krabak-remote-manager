@@ -88,6 +88,7 @@ function safeUser(user) {
     activatedAt: user.activatedAt || null,
     disabledAt: user.disabledAt || null,
     activationExpiresAt: user.activationExpiresAt || null,
+    mfaEnabled: !!user.mfaSecretEnc,
   };
 }
 
@@ -127,6 +128,9 @@ export function createTeacher(email) {
     disabledAt: null,
     passwordSalt: null,
     passwordHash: null,
+    mfaSecretEnc: null,
+    recoveryCodeHashes: [],
+    mfaEnrolledAt: null,
     activationHash: activation.activationHash,
     activationExpiresAt: activation.expiresAt,
   };
@@ -177,6 +181,73 @@ export function verifyTeacherPassword(password, user) {
   }));
 }
 
+export function setTeacherMfa(email, encryptedSecret, recoveryCodeHashes, usedTotpCounter) {
+  const normalizedEmail = normalizeEmail(email);
+  const users = readUsers();
+  const user = users.find(item => item.email === normalizedEmail && item.status === 'active');
+  if (!user) return false;
+  user.mfaSecretEnc = encryptedSecret;
+  user.recoveryCodeHashes = [...recoveryCodeHashes];
+  user.mfaEnrolledAt = new Date().toISOString();
+  user.usedTotpCounters = [usedTotpCounter];
+  writeUsers(users);
+  return true;
+}
+
+export function consumeTeacherTotpCounter(email, counter, currentCounter) {
+  const normalizedEmail = normalizeEmail(email);
+  const users = readUsers();
+  const user = users.find(item => item.email === normalizedEmail && item.status === 'active' && item.mfaSecretEnc);
+  if (!user) return false;
+  const used = Array.isArray(user.usedTotpCounters) ? user.usedTotpCounters : [];
+  if (used.includes(counter)) return false;
+  user.usedTotpCounters = used.filter(value => Number.isSafeInteger(value) && value >= currentCounter - 6);
+  user.usedTotpCounters.push(counter);
+  writeUsers(users);
+  return true;
+}
+
+export function consumeTeacherRecoveryCode(email, suppliedHash) {
+  const normalizedEmail = normalizeEmail(email);
+  const users = readUsers();
+  const user = users.find(item => item.email === normalizedEmail && item.status === 'active');
+  if (!user || !Array.isArray(user.recoveryCodeHashes)) return false;
+  const supplied = Buffer.from(String(suppliedHash), 'hex');
+  const index = user.recoveryCodeHashes.findIndex(hash => {
+    try {
+      const stored = Buffer.from(hash, 'hex');
+      return stored.length === supplied.length && crypto.timingSafeEqual(stored, supplied);
+    } catch { return false; }
+  });
+  if (index < 0) return false;
+  user.recoveryCodeHashes.splice(index, 1);
+  writeUsers(users);
+  return true;
+}
+
+export function replaceTeacherRecoveryCodes(email, recoveryCodeHashes) {
+  const normalizedEmail = normalizeEmail(email);
+  const users = readUsers();
+  const user = users.find(item => item.email === normalizedEmail && item.status === 'active' && item.mfaSecretEnc);
+  if (!user) return false;
+  user.recoveryCodeHashes = [...recoveryCodeHashes];
+  writeUsers(users);
+  return true;
+}
+
+export function resetTeacherMfa(email) {
+  const normalizedEmail = normalizeEmail(email);
+  const users = readUsers();
+  const user = users.find(item => item.email === normalizedEmail && item.status === 'active');
+  if (!user) return false;
+  user.mfaSecretEnc = null;
+  user.recoveryCodeHashes = [];
+  user.mfaEnrolledAt = null;
+  user.usedTotpCounters = [];
+  writeUsers(users);
+  return true;
+}
+
 export function disableTeacher(userId) {
   const users = readUsers();
   const user = users.find(item => item.id === userId && item.role === 'teacher');
@@ -199,6 +270,10 @@ export function reissueActivation(userId) {
   user.activatedAt = null;
   user.passwordSalt = null;
   user.passwordHash = null;
+  user.mfaSecretEnc = null;
+  user.recoveryCodeHashes = [];
+  user.mfaEnrolledAt = null;
+  user.usedTotpCounters = [];
   user.activationHash = activation.activationHash;
   user.activationExpiresAt = activation.expiresAt;
   writeUsers(users);

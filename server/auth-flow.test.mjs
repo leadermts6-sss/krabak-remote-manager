@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hashPassword } from './auth.mjs';
+import { createTotpCode } from './mfa.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const serverEntry = path.join(projectRoot, 'server', 'index.mjs');
@@ -21,6 +22,28 @@ let port;
 let origin;
 let child;
 let adminCookie;
+const mfaSecrets = new Map();
+const recoveryCodes = new Map();
+const usedTotpCounters = new Map();
+async function freshTotpCode(email) {
+  const secret = mfaSecrets.get(email);
+  if (!secret) throw new Error('MFA secret missing for test account');
+  const deadline = Date.now() + 35_000;
+  while (Date.now() < deadline) {
+    const used = usedTotpCounters.get(email) || new Set();
+    const current = Math.floor(Date.now() / 30_000);
+    const candidates = [current, current + 1, current - 1];
+    for (const counter of candidates) {
+      if (counter < 0 || used.has(counter)) continue;
+      if (counter === current - 1 && Date.now() % 30_000 > 20_000) continue;
+      used.add(counter);
+      usedTotpCounters.set(email, used);
+      return createTotpCode(secret, counter * 30_000 + 1_000);
+    }
+    await wait(300);
+  }
+  throw new Error('No unused TOTP counter remains in the accepted test window');
+}
 before(async () => {
   dataDir = await mkdtemp(path.join(os.tmpdir(), 'krabak-remote-auth-test-'));
   port = await availablePort();
@@ -29,7 +52,7 @@ before(async () => {
   await writeFile(path.join(dataDir, 'admin.json'), JSON.stringify(adminRecord), { mode: 0o600 });
   child = spawn(process.execPath, [serverEntry], {
     cwd: projectRoot,
-    env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), KRABAK_DATA_DIR: dataDir, KRABAK_PUBLIC_ORIGIN: origin, KRABAK_AGENT_TRUSTED_ACCESS_ENABLED: '0', KRABAK_AGENT_APPROVAL_TTL_MS: '1500' },
+    env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), KRABAK_DATA_DIR: dataDir, KRABAK_PUBLIC_ORIGIN: origin, KRABAK_TRUST_PROXY: '1', KRABAK_AGENT_TRUSTED_ACCESS_ENABLED: '0', KRABAK_AGENT_APPROVAL_TTL_MS: '1500' },
     stdio: ['ignore', 'ignore', 'ignore'],
   });
   let ready = false;
@@ -66,8 +89,12 @@ async function availablePort() {
 
 async function api(route, { method = 'GET', body, cookie, headers: extraHeaders = {} } = {}) {
   const headers = { ...extraHeaders, origin };
+  if (route === '/api/login' && body?.email) {
+    const bytes = crypto.createHash('sha256').update(body.email.toLowerCase()).digest();
+    headers['x-real-ip'] = `10.${bytes[0]}.${bytes[1]}.${bytes[2]}`;
+  }
   if (body !== undefined) headers['content-type'] = 'application/json';
-  if (cookie) headers.cookie = 'krabak_session=' + cookie;
+  if (cookie) headers.cookie = cookie.includes('=') ? cookie : 'krabak_session=' + cookie;
   const response = await fetch(origin + route, {
     method,
     headers,
@@ -76,14 +103,26 @@ async function api(route, { method = 'GET', body, cookie, headers: extraHeaders 
   const payload = await response.json();
   const setCookie = response.headers.get('set-cookie');
   const session = setCookie?.match(/(?:^|,\s*)krabak_session=([^;,]*)/)?.[1];
-  return { status: response.status, payload, setCookie, cookie: session || null };
+  const mfa = setCookie?.match(/(?:^|,\s*)krabak_mfa=([^;,]*)/)?.[1];
+  return { status: response.status, payload, setCookie, cookie: session || null, mfaCookie: mfa ? 'krabak_mfa=' + mfa : null };
 }
 
 async function login(email, password) {
   const response = await api('/api/login', { method: 'POST', body: { email, password } });
-  assert.equal(response.status, 200, 'valid credentials should create a session');
-  assert.ok(response.cookie, 'login should return a session cookie');
-  return response.cookie;
+  assert.equal(response.status, 200, 'valid password should create an MFA challenge');
+  assert.equal(response.payload.mfaRequired, true);
+  assert.ok(response.mfaCookie, 'password login should return a short-lived MFA challenge cookie');
+  if (response.payload.mfaSetupRequired) {
+    const setup = await api('/api/mfa/setup', { method: 'POST', body: {}, cookie: response.mfaCookie });
+    assert.equal(setup.status, 200);
+    mfaSecrets.set(email, setup.payload.secret);
+    usedTotpCounters.set(email, new Set());
+  }
+  const verified = await api('/api/mfa/verify', { method: 'POST', body: { code: await freshTotpCode(email) }, cookie: response.mfaCookie });
+  assert.equal(verified.status, 200, 'valid TOTP should grant a session');
+  assert.ok(verified.cookie, 'MFA verification should return a session cookie');
+  if (Array.isArray(verified.payload.recoveryCodes)) recoveryCodes.set(email, verified.payload.recoveryCodes);
+  return verified.cookie;
 }
 
 async function waitForMessageAfter(socket, type, existingCount, timeoutMs = 2500) {
@@ -233,23 +272,77 @@ async function connectWebSocket(cookie = null, extraHeaders = {}) {
   return socket;
 }
 
+test('password alone cannot access the app or WebSocket; valid MFA is required for a session', async () => {
+  const password = await api('/api/login', { method: 'POST', body: { email: adminEmail, password: adminPassword } });
+  assert.equal(password.status, 200);
+  assert.equal(password.payload.mfaRequired, true);
+  assert.equal(password.cookie, null, 'password verification must not set an authenticated session');
+  assert.ok(password.mfaCookie);
+  const pendingStatus = await api('/api/status', { cookie: password.mfaCookie });
+  assert.equal(pendingStatus.payload.user, null);
+  assert.equal(pendingStatus.payload.mfaPending.setupRequired, false);
+  assert.equal((await api('/api/me', { cookie: password.mfaCookie })).status, 401);
+  assert.equal((await api('/api/mfa/verify', { method: 'POST', body: { code: 'invalid' }, cookie: password.mfaCookie })).status, 401);
+  const validCode = await freshTotpCode(adminEmail);
+  const verified = await api('/api/mfa/verify', { method: 'POST', body: { code: validCode }, cookie: password.mfaCookie });
+  assert.equal(verified.status, 200);
+  assert.ok(verified.cookie);
+  const replayChallenge = await api('/api/login', { method: 'POST', body: { email: adminEmail, password: adminPassword } });
+  const replayed = await api('/api/mfa/verify', { method: 'POST', body: { code: validCode }, cookie: replayChallenge.mfaCookie });
+  assert.equal(replayed.status, 401, 'the same TOTP time step must not be accepted twice');
+  await api('/api/mfa/cancel', { method: 'POST', body: {}, cookie: replayChallenge.mfaCookie });
+});
+
+test('MFA recovery codes are one-time and cannot be reused', async () => {
+  const recoveryCode = recoveryCodes.get(adminEmail)?.[0];
+  assert.ok(recoveryCode, 'initial enrollment should issue recovery codes once');
+  const firstLogin = await api('/api/login', { method: 'POST', body: { email: adminEmail, password: adminPassword } });
+  const used = await api('/api/mfa/verify', { method: 'POST', body: { code: recoveryCode }, cookie: firstLogin.mfaCookie });
+  assert.equal(used.status, 200);
+  assert.equal(used.payload.user.recoveryCodesRemaining, 9);
+  const secondLogin = await api('/api/login', { method: 'POST', body: { email: adminEmail, password: adminPassword } });
+  const reused = await api('/api/mfa/verify', { method: 'POST', body: { code: recoveryCode }, cookie: secondLogin.mfaCookie });
+  assert.equal(reused.status, 401);
+  await api('/api/mfa/cancel', { method: 'POST', body: {}, cookie: secondLogin.mfaCookie });
+});
+
+test('recovery-code rotation requires a fresh TOTP and invalidates the previous set', async () => {
+  const previousCode = recoveryCodes.get(adminEmail)?.[1];
+  const rotated = await api('/api/mfa/recovery-codes', {
+    method: 'POST', cookie: adminCookie, body: { code: await freshTotpCode(adminEmail) },
+  });
+  assert.equal(rotated.status, 200);
+  assert.equal(rotated.payload.recoveryCodes.length, 10);
+  assert.equal(rotated.payload.recoveryCodes.includes(previousCode), false);
+  recoveryCodes.set(adminEmail, rotated.payload.recoveryCodes);
+  const loginAttempt = await api('/api/login', { method: 'POST', body: { email: adminEmail, password: adminPassword } });
+  const oldCode = await api('/api/mfa/verify', { method: 'POST', body: { code: previousCode }, cookie: loginAttempt.mfaCookie });
+  assert.equal(oldCode.status, 401);
+  const newCode = await api('/api/mfa/verify', { method: 'POST', body: { code: rotated.payload.recoveryCodes[0] }, cookie: loginAttempt.mfaCookie });
+  assert.equal(newCode.status, 200);
+  assert.equal(newCode.payload.user.recoveryCodesRemaining, 9);
+});
+
+test('MFA can be reset with a recovery code and next sign-in must enroll again', async () => {
+  const code = recoveryCodes.get(adminEmail)?.[1];
+  const reset = await api('/api/mfa/reset', { method: 'POST', cookie: adminCookie, body: { code } });
+  assert.equal(reset.status, 200);
+  assert.equal((await api('/api/me', { cookie: adminCookie })).status, 401);
+  adminCookie = await login(adminEmail, adminPassword);
+  assert.equal(recoveryCodes.get(adminEmail).length, 10);
+});
+
 test('status returns the current account only for its valid session without requiring a failed /me request', async () => {
   const anonymous = await api('/api/status');
   assert.equal(anonymous.status, 200);
   assert.equal(anonymous.payload.user, null);
   const authenticated = await api('/api/status', { cookie: adminCookie });
-  assert.deepEqual(authenticated.payload.user, { email: adminEmail, role: 'admin' });
+  assert.deepEqual(authenticated.payload.user, { email: adminEmail, role: 'admin', mfaEnabled: true, recoveryCodesRemaining: 10 });
 });
 
-test('admin login remains compatible, role is explicit, and logout invalidates the session', { timeout: 20000 }, async () => {
-  const cookie = await login(adminEmail, adminPassword);
-  const me = await api('/api/me', { cookie });
-  assert.deepEqual(me.payload.user, { email: adminEmail, role: 'admin' });
-
-  const logout = await api('/api/logout', { method: 'POST', cookie, body: {} });
-  assert.equal(logout.status, 200);
-  assert.match(logout.setCookie || '', /Max-Age=0/);
-  assert.equal((await api('/api/me', { cookie })).status, 401);
+test('admin session exposes its role and requires MFA', async () => {
+  const me = await api('/api/me', { cookie: adminCookie });
+  assert.deepEqual(me.payload.user, { email: adminEmail, role: 'admin', mfaEnabled: true, recoveryCodesRemaining: 10 });
 });
 
 test('activation is one-time, does not create a session, and teachers can sign in and log out', { timeout: 20000 }, async () => {
@@ -259,6 +352,7 @@ test('activation is one-time, does not create a session, and teachers can sign i
   assert.equal(listed.status, 200);
   assert.equal(listed.payload.users.some(user => user.email === email), true);
   const record = listed.payload.users.find(user => user.email === email);
+  assert.equal(record.mfaEnabled, false);
   assert.equal(Object.hasOwn(record, 'passwordHash'), false);
   assert.equal(Object.hasOwn(record, 'activationHash'), false);
   assert.equal(JSON.stringify(listed.payload).includes(pending.activationCode), false);
@@ -272,7 +366,9 @@ test('activation is one-time, does not create a session, and teachers can sign i
   assert.equal(reused.payload.error, 'Invalid or expired activation code');
 
   const cookie = await login(email, 'TeacherPassword123');
-  assert.deepEqual((await api('/api/me', { cookie })).payload.user, { email, role: 'teacher' });
+  assert.deepEqual((await api('/api/me', { cookie })).payload.user, { email, role: 'teacher', mfaEnabled: true, recoveryCodesRemaining: 10 });
+  const afterEnrollment = await api('/api/users', { cookie: adminCookie });
+  assert.equal(afterEnrollment.payload.users.find(user => user.email === email).mfaEnabled, true);
   assert.equal((await api('/api/logout', { method: 'POST', cookie, body: {} })).status, 200);
   assert.equal((await api('/api/me', { cookie })).status, 401);
 });
@@ -365,7 +461,7 @@ test('teacher access is role-scoped, active Hosts are owner-scoped, and Host con
   const newActivation = await activate('teacher.b@example.edu', reissued.payload.activationCode, 'TeacherPassword789');
   assert.equal(newActivation.status, 200);
   const teacherBNewCookie = await login('teacher.b@example.edu', 'TeacherPassword789');
-  assert.deepEqual((await api('/api/me', { cookie: teacherBNewCookie })).payload.user, { email: 'teacher.b@example.edu', role: 'teacher' });
+  assert.deepEqual((await api('/api/me', { cookie: teacherBNewCookie })).payload.user, { email: 'teacher.b@example.edu', role: 'teacher', mfaEnabled: true, recoveryCodesRemaining: 10 });
 
   const newHost = await api('/api/host/register', { method: 'POST', cookie: teacherBNewCookie, body: { name: 'Teacher B Reconnected Host' } });
   const wsNew = await connectWebSocket();

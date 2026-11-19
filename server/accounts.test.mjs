@@ -62,6 +62,7 @@ test('activation persists only hashes with restrictive data-directory and file m
   assert.deepEqual(accounts.listTeachers().map(x => x.email), ['teacher@example.edu']);
   assert.equal(Object.hasOwn(accounts.listTeachers()[0], 'passwordHash'), false);
   assert.equal(Object.hasOwn(accounts.listTeachers()[0], 'activationHash'), false);
+  assert.equal(accounts.listTeachers()[0].mfaEnabled, false);
 
   if (process.platform !== 'win32') {
     assert.equal(fs.statSync(dataDir).mode & 0o777, 0o700);

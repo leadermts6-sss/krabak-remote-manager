@@ -4,18 +4,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
-import {readAdmin,verifyPassword,makeToken,parseCookies} from './auth.mjs';
-import {createTeacher,activateTeacher,listTeachers,getTeacherForAuth,verifyTeacherPassword,disableTeacher,reissueActivation} from './accounts.mjs';
+import {readAdmin,verifyPassword,makeToken,parseCookies,setAdminMfa,consumeAdminTotpCounter,consumeAdminRecoveryCode,replaceAdminRecoveryCodes,resetAdminMfa} from './auth.mjs';
+import {createTeacher,activateTeacher,listTeachers,getTeacherForAuth,verifyTeacherPassword,disableTeacher,reissueActivation,setTeacherMfa,consumeTeacherTotpCounter,consumeTeacherRecoveryCode,replaceTeacherRecoveryCodes,resetTeacherMfa} from './accounts.mjs';
 import {canManageUsers,visibleHosts,visibleAudit} from './authorization.mjs';
 import {AGENT_APPROVAL_TTL,createAgentStore,isAgentApprovalExpired,trustedAgentAccessEnabled,validateAgentFrame,validateAgentInput} from './agents.mjs';
 import {isMobileRequest} from './mobile-policy.mjs';
+import {createTotpSecret,makeTotpUrl,matchTotpCounter,createRecoveryCodes,hashRecoveryCode,encryptTotpSecret,decryptTotpSecret} from './mfa.mjs';
 import {wsUpgrade} from './ws.mjs';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const DIST=path.join(ROOT,'dist');const PORT=Number(process.env.PORT||8787);const HOST=process.env.HOST||'127.0.0.1';
 const ORIGIN=process.env.KRABAK_PUBLIC_ORIGIN||'';const DEV_ORIGIN=process.env.KRABAK_DEV_ORIGIN||'';
-const sessions=new Map();const hosts=new Map();const agentsOnline=new Map();const agentStore=createAgentStore();const connections=new Map();const logins=new Map();const registrations=new Map();const sessionRequestsByAccount=new Map();const sessionRequestsByIP=new Map();const agentEnrollments=new Map();const agentActivations=new Map();const activationAttempts=new Map();const userSockets=new Map();const audit=[];
-const LIMIT=12_000;const SESS_TTL=8*3600_000;const CODE_TTL=15*60_000;
+const sessions=new Map();const mfaChallenges=new Map();const hosts=new Map();const agentsOnline=new Map();const agentStore=createAgentStore();const connections=new Map();const logins=new Map();const mfaVerifications=new Map();const mfaAccountChanges=new Map();const registrations=new Map();const sessionRequestsByAccount=new Map();const sessionRequestsByIP=new Map();const agentEnrollments=new Map();const agentActivations=new Map();const activationAttempts=new Map();const userSockets=new Map();const audit=[];
+const LIMIT=12_000;const SESS_TTL=8*3600_000;const MFA_TTL=5*60_000;const CODE_TTL=15*60_000;
 const now=()=>Date.now();const clean=x=>String(x??'').trim().slice(0,160);
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.json':'application/json','.webmanifest':'application/manifest+json','.woff2':'font/woff2','.ico':'image/x-icon'};
 const randomCode=()=>crypto.randomBytes(5).toString('hex').slice(0,8).toUpperCase();
@@ -37,11 +38,22 @@ function getIP(req){
 function rate(map,key,max,ms){let r=map.get(key);if(!r||now()-r.start>ms){r={start:now(),count:0};map.set(key,r);}r.count++;if(map.size>10_000)for(const [entry,value] of map)if(now()-value.start>ms)map.delete(entry);return r.count<=max;}
 function getUser(req){const token=parseCookies(req.headers.cookie).krabak_session;const s=sessions.get(token);if(!s)return null;if(s.expires<now()){sessions.delete(token);return null;}s.expires=now()+SESS_TTL;return s;}
 function sessionCookie(req,token,age){const proto=(process.env.KRABAK_TRUST_PROXY==='1'?req.headers['x-forwarded-proto']:null)||(req.socket.encrypted?'https':'http');return `krabak_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${age}; ${proto==='https'?'Secure; ':''}`;}
+function mfaCookie(req,token,age){const proto=(process.env.KRABAK_TRUST_PROXY==='1'?req.headers['x-forwarded-proto']:null)||(req.socket.encrypted?'https':'http');return `krabak_mfa=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${age}; ${proto==='https'?'Secure; ':''}`;}
+function getMfaChallenge(req){const token=parseCookies(req.headers.cookie).krabak_mfa;const challenge=mfaChallenges.get(token);if(!challenge)return null;if(challenge.expires<now()){mfaChallenges.delete(token);return null;}return {token,challenge};}
+function accountRecord(email){const admin=readAdmin();if(admin?.email===email)return {...admin,role:'admin'};const teacher=getTeacherForAuth(email);return teacher?{...teacher,role:'teacher'}:null;}
+function saveAccountMfa(user,encryptedSecret,recoveryHashes,usedTotpCounter){return user.role==='admin'?setAdminMfa(user.email,encryptedSecret,recoveryHashes,usedTotpCounter):setTeacherMfa(user.email,encryptedSecret,recoveryHashes,usedTotpCounter);}
+function consumeAccountTotpCounter(user,counter){const currentCounter=Math.floor(now()/30_000);return user.role==='admin'?consumeAdminTotpCounter(user.email,counter,currentCounter):consumeTeacherTotpCounter(user.email,counter,currentCounter);}
+function consumeAccountRecoveryCode(user,hash){return user.role==='admin'?consumeAdminRecoveryCode(user.email,hash):consumeTeacherRecoveryCode(user.email,hash);}
+function replaceAccountRecoveryCodes(user,hashes){return user.role==='admin'?replaceAdminRecoveryCodes(user.email,hashes):replaceTeacherRecoveryCodes(user.email,hashes);}
+function resetAccountMfa(user){return user.role==='admin'?resetAdminMfa(user.email):resetTeacherMfa(user.email);}
+function authenticatedUser(user){return {email:user.email,role:user.role,mfaEnabled:true,recoveryCodesRemaining:Array.isArray(user.recoveryCodeHashes)?user.recoveryCodeHashes.length:0};}
+function grantMfaSession(req,user,recoveryCodes=null){const token=makeToken();sessions.set(token,{email:user.email,role:user.role,expires:now()+SESS_TTL,mfaVerifiedAt:now()});mfaChallenges.delete(parseCookies(req.headers.cookie).krabak_mfa);addAudit('login','เข้าสู่ระบบพร้อม MFA',user.email,user.email,[user.email]);const cookies=[sessionCookie(req,token,8*3600),mfaCookie(req,'',0)];return {user:authenticatedUser(accountRecord(user.email)||user),recoveryCodes,cookies};}
+function revokeMfaSessions(email){for(const [token,session] of sessions)if(session.email===email)sessions.delete(token);for(const [token,challenge] of mfaChallenges)if(challenge.email===email)mfaChallenges.delete(token);for(const [id,session] of connections)if(session.viewer===email||session.host.ownerEmail===email)endSession(id,'MFA reset',email);for(const ws of userSockets.get(email)||[])try{ws.close()}catch{}userSockets.delete(email);}
 async function readBody(req){return new Promise((resolve,reject)=>{let data='';req.on('data',buf=>{data+=buf;if(data.length>LIMIT){reject(new Error('Body too large'));req.destroy()}});req.on('end',()=>{try{resolve(data?JSON.parse(data):{})}catch{reject(new Error('Invalid JSON'))}});req.on('error',reject)});}
 function getHostByToken(token){for(const h of hosts.values())if(h.token===token&&h.expires>now())return h;return null;}
 function accountIsActive(email){const normalized=String(email||'').toLowerCase();const admin=readAdmin();return admin?.email?.toLowerCase()===normalized||!!getTeacherForAuth(normalized);}
 function rotateAgentPairingCode(host){if(host.code)hosts.delete(host.code);let code;do{code=randomCode()}while(hosts.has(code));host.code=code;host.expires=now()+CODE_TTL;hosts.set(code,host);send(host.ws,{type:'pairing-code',code,expiresAt:new Date(host.expires).toISOString()});}
-function cleanup(){for(const [k,v] of sessions)if(v.expires<now())sessions.delete(k);for(const host of agentsOnline.values())if(host.expires<now()&&host.ws&&!host.ws.closed)rotateAgentPairingCode(host);for(const [k,v] of hosts)if(v.expires<now()&&!v.activeSession&&!v.agent)hosts.delete(k);for(const [k,v] of connections){if(v.expires<now())endSession(k,'Expired session');else if(isAgentApprovalExpired(v,now()))endSession(k,'Approval expired');}}
+function cleanup(){for(const [k,v] of sessions)if(v.expires<now())sessions.delete(k);for(const [k,v] of mfaChallenges)if(v.expires<now())mfaChallenges.delete(k);for(const host of agentsOnline.values())if(host.expires<now()&&host.ws&&!host.ws.closed)rotateAgentPairingCode(host);for(const [k,v] of hosts)if(v.expires<now()&&!v.activeSession&&!v.agent)hosts.delete(k);for(const [k,v] of connections){if(v.expires<now())endSession(k,'Expired session');else if(isAgentApprovalExpired(v,now()))endSession(k,'Approval expired');}}
 function send(conn,message){if(conn&&!conn.closed)conn.send(message);}
 function endSession(id,reason='Ended by participant',actorEmail=null){const s=connections.get(id);if(!s)return;connections.delete(id);send(s.host.ws,{type:'ended',sessionId:id,reason});send(s.viewerWS,{type:'ended',sessionId:id,reason});s.host.activeSession=null;addAudit('session','ปิดการเชื่อมต่อ',s.host.name,actorEmail,[s.host.ownerEmail,s.viewer]);}
 function revokeHost(h){if(h.activeSession)endSession(h.activeSession,'Host revoked',h.ownerEmail);hosts.delete(h.code);if(h.agent)agentsOnline.delete(h.id);if(h.ws){send(h.ws,{type:'ended',reason:'Host revoked'});h.ws.close();}addAudit('host','ยกเลิกการแชร์',h.name,h.ownerEmail,[h.ownerEmail]);}
@@ -60,14 +72,43 @@ async function handleApi(req,res,pathname){
   addAudit('agent','ลงทะเบียน Windows Agent',activated.device.name,activated.device.ownerEmail,[activated.device.ownerEmail]);
   return json(res,201,{device:activated.device,token:activated.token});
  }
- if(pathname==='/api/status'&&method==='GET'){const current=getUser(req);return json(res,200,{ok:true,name:'KRABAK Remote Manager',initialised:!!readAdmin(),rtcConfig:stunOnly(),user:current?{email:current.email,role:current.role}:null});}
+ if(pathname==='/api/status'&&method==='GET'){const current=getUser(req);const pending=getMfaChallenge(req);return json(res,200,{ok:true,name:'KRABAK Remote Manager',initialised:!!readAdmin(),rtcConfig:stunOnly(),user:current?authenticatedUser(accountRecord(current.email)||current):null,mfaPending:pending?{setupRequired:!accountRecord(pending.challenge.email)?.mfaSecretEnc}:null});}
  if(pathname==='/api/login'&&method==='POST'){
-  const ip=getIP(req);if(!rate(logins,ip,7,15*60_000))return reject(res,429,'Too many login attempts');
-  const email=clean(body.email).toLowerCase();const admin=readAdmin();let user=null;
+  const ip=getIP(req);const email=clean(body.email).toLowerCase();if(!rate(logins,'ip:'+ip,120,15*60_000)||!rate(logins,'account:'+email,7,15*60_000))return reject(res,429,'Too many login attempts');
+  const admin=readAdmin();let user=null;
   if(admin&&email===admin.email&&verifyPassword(body.password,admin))user={email:admin.email,role:'admin'};
   else{const teacher=getTeacherForAuth(email);if(teacher&&verifyTeacherPassword(body.password,teacher))user={email:teacher.email,role:'teacher'};}
   if(!user)return reject(res,401,'อีเมลหรือรหัสผ่านไม่ถูกต้อง');
-  const token=makeToken();sessions.set(token,{email:user.email,role:user.role,expires:now()+SESS_TTL});addAudit('login','เข้าสู่ระบบสำเร็จ',user.email,user.email,[user.email]);return json(res,200,{user},{'Set-Cookie':sessionCookie(req,token,8*3600)});
+  const challengeToken=makeToken();mfaChallenges.set(challengeToken,{email:user.email,role:user.role,expires:now()+MFA_TTL,attempts:0,totpSecret:null});
+  const record=accountRecord(user.email);return json(res,200,{mfaRequired:true,mfaSetupRequired:!record?.mfaSecretEnc},{'Set-Cookie':[mfaCookie(req,challengeToken,Math.floor(MFA_TTL/1000)),sessionCookie(req,'',0)]});
+ }
+ if(pathname==='/api/mfa/setup'&&method==='POST'){
+  const pending=getMfaChallenge(req);if(!pending)return reject(res,401,'MFA challenge expired; sign in again');
+  const user=accountRecord(pending.challenge.email);if(!user)return reject(res,401,'Account is not active');
+  if(user.mfaSecretEnc)return reject(res,409,'MFA is already configured; verify the current code');
+  if(!pending.challenge.totpSecret)pending.challenge.totpSecret=createTotpSecret();
+  return json(res,200,{email:user.email,secret:pending.challenge.totpSecret,otpauthUrl:makeTotpUrl(pending.challenge.totpSecret,user.email)});
+ }
+ if(pathname==='/api/mfa/cancel'&&method==='POST'){
+  const pending=getMfaChallenge(req);if(pending)mfaChallenges.delete(pending.token);
+  return json(res,200,{ok:true},{'Set-Cookie':mfaCookie(req,'',0)});
+ }
+ if(pathname==='/api/mfa/verify'&&method==='POST'){
+  const pending=getMfaChallenge(req);if(!pending)return reject(res,401,'MFA challenge expired; sign in again');
+  if(!rate(mfaVerifications,'ip:'+getIP(req),120,15*60_000)||!rate(mfaVerifications,'account:'+pending.challenge.email,30,15*60_000))return reject(res,429,'Too many MFA attempts');
+  const challenge=pending.challenge;const user=accountRecord(challenge.email);if(!user){mfaChallenges.delete(pending.token);return reject(res,401,'Account is not active');}
+  const code=typeof body.code==='string'?body.code.trim():'';let recoveryCodes=null;let valid=false;
+  if(user.mfaSecretEnc){
+   if(!/^\d{6}$/.test(code))valid=consumeAccountRecoveryCode(user,hashRecoveryCode(code));
+   else try{const secret=decryptTotpSecret(user.mfaSecretEnc,user.email);const counter=matchTotpCounter(secret,code);valid=counter!==null&&consumeAccountTotpCounter(user,counter);}
+   catch{console.error('MFA secret could not be decrypted for account:',user.email);return reject(res,500,'MFA storage error; contact the administrator');}
+   if(valid&&!/^\d{6}$/.test(code))addAudit('shield','ใช้รหัสกู้คืน MFA',user.email,user.email,[user.email]);
+  }else if(challenge.totpSecret){
+   const counter=matchTotpCounter(challenge.totpSecret,code);valid=counter!==null;
+   if(valid){recoveryCodes=createRecoveryCodes();const encrypted=encryptTotpSecret(challenge.totpSecret,user.email);if(!saveAccountMfa(user,encrypted,recoveryCodes.map(hashRecoveryCode),counter))return reject(res,409,'Account changed; restart MFA setup');addAudit('shield','เปิดใช้ MFA',user.email,user.email,[user.email]);}
+  }
+  if(!valid){challenge.attempts++;if(challenge.attempts>=8){mfaChallenges.delete(pending.token);return reject(res,401,'MFA verification failed; sign in again');}return reject(res,401,'รหัส MFA ไม่ถูกต้อง');}
+  const granted=grantMfaSession(req,user,recoveryCodes);return json(res,200,{ok:true,user:granted.user,recoveryCodes:granted.recoveryCodes},{'Set-Cookie':granted.cookies});
  }
  if(pathname==='/api/activate'&&method==='POST'){
   const ip=getIP(req);if(!rate(activationAttempts,ip,12,15*60_000))return reject(res,429,'Too many activation attempts');
@@ -79,9 +120,29 @@ async function handleApi(req,res,pathname){
  if(pathname==='/api/logout'&&method==='POST'){
   const token=parseCookies(req.headers.cookie).krabak_session;sessions.delete(token);
   for(const ws of userSockets.get(user.email)||[])if(ws.sessionToken===token)try{ws.close()}catch{}
-  return json(res,200,{ok:true},{'Set-Cookie':sessionCookie(req,'',0)});
+  const pending=getMfaChallenge(req);if(pending)mfaChallenges.delete(pending.token);
+  return json(res,200,{ok:true},{'Set-Cookie':[sessionCookie(req,'',0),mfaCookie(req,'',0)]});
  }
- if(pathname==='/api/me'&&method==='GET')return json(res,200,{user:{email:user.email,role:user.role}});
+ if(pathname==='/api/me'&&method==='GET'){const current=accountRecord(user.email);return json(res,200,{user:current?authenticatedUser(current):{email:user.email,role:user.role,mfaEnabled:true,recoveryCodesRemaining:0}});}
+ if(pathname==='/api/mfa/reset'&&method==='POST'){
+  const current=accountRecord(user.email);if(!current?.mfaSecretEnc)return reject(res,409,'MFA is not configured');
+  if(!rate(mfaAccountChanges,'account:'+user.email,5,15*60_000))return reject(res,429,'Too many MFA reset attempts');
+  const code=typeof body.code==='string'?body.code.trim():'';let valid=false;
+  if(/^\d{6}$/.test(code)){try{const secret=decryptTotpSecret(current.mfaSecretEnc,current.email);const counter=matchTotpCounter(secret,code);valid=counter!==null&&consumeAccountTotpCounter(current,counter);}catch{console.error('MFA secret could not be decrypted for account:',current.email);}}
+  else valid=consumeAccountRecoveryCode(current,hashRecoveryCode(code));
+  if(!valid)return reject(res,401,'รหัส MFA หรือรหัสกู้คืนไม่ถูกต้อง');
+  if(!resetAccountMfa(current))return reject(res,409,'Could not reset MFA');
+  revokeMfaSessions(current.email);addAudit('shield','รีเซ็ต MFA เพื่อ enroll ใหม่',current.email,current.email,[current.email]);
+  return json(res,200,{ok:true},{'Set-Cookie':[sessionCookie(req,'',0),mfaCookie(req,'',0)]});
+ }
+ if(pathname==='/api/mfa/recovery-codes'&&method==='POST'){
+  if(!rate(mfaAccountChanges,'account:'+user.email,6,15*60_000))return reject(res,429,'Too many recovery-code changes');
+  const current=accountRecord(user.email);if(!current?.mfaSecretEnc)return reject(res,409,'MFA is not configured');
+  let secret;try{secret=decryptTotpSecret(current.mfaSecretEnc,current.email)}catch{return reject(res,500,'MFA storage error; contact the administrator');}
+  const counter=matchTotpCounter(secret,typeof body.code==='string'?body.code.trim():'');if(counter===null||!consumeAccountTotpCounter(current,counter))return reject(res,401,'รหัส MFA ไม่ถูกต้องหรือถูกใช้แล้ว');
+  const codes=createRecoveryCodes();if(!replaceAccountRecoveryCodes(current,codes.map(hashRecoveryCode)))return reject(res,409,'Could not update recovery codes');
+  addAudit('shield','เปลี่ยนรหัสกู้คืน MFA',current.email,current.email,[current.email]);return json(res,200,{recoveryCodes:codes});
+ }
   if(pathname==='/api/agents/enrollment'&&method==='POST'){
    const ip=getIP(req);if(!rate(agentEnrollments,ip,10,60*60_000))return reject(res,429,'Too many Agent enrollment codes');
    try{return json(res,201,agentStore.createEnrollment(user.email));}catch{return reject(res,500,'Could not create Agent enrollment code');}

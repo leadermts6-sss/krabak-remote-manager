@@ -8,6 +8,7 @@ const state = {
   route: 'login', devices: [], events: [], users: [], deviceView: 'grid', search: '', modal: null, mobileMenu: false,
   settings: stored('krabak-prefs', { theme: 'dark', quality: 'balanced', clipboard: true, notifications: true, conserve: true, defaultMode: 'window' }),
   backend: false, initialised: false, appReady: false, account: null, apiError: '', authNotice: '', activationIssued: null, resourceError: '',
+  mfaPending: null, mfaSetup: null, mfaRecoveryCodes: null,
   authBusy: false, passwordVisible: false, activationEmail: '',
   ws: null, liveSession: null, remoteStream: null, localStream: null, pc: null, rtcChannel: null,
   hostToken: null, hostCode: null, hostName: '', hostRequests: [], hostStatus: 'idle', hostExpiry: null, activeSessionId: null, hostChat: [], sessionEnded: false, connection: 'idle',
@@ -59,16 +60,24 @@ function render() {
   const requested = route().split('/')[0] || 'login';
   document.documentElement.classList.toggle('light-theme', state.settings.theme === 'light');
   if (!state.appReady) { root.innerHTML = loadingPage(); return; }
+  if (!state.account && state.mfaPending) {
+    if (requested !== 'mfa') location.hash = '#/mfa';
+    state.route = 'mfa'; root.innerHTML = mfaPage(); return;
+  }
   if (!state.account && !['login', 'activate'].includes(requested)) {
     if (location.hash !== '#/login') location.hash = '#/login';
     state.route = 'login'; root.innerHTML = loginPage(); return;
   }
-  if (state.account && ['login', 'activate'].includes(requested)) {
+  if (state.account && requested === 'mfa-recovery' && state.mfaRecoveryCodes) {
+    state.route = 'mfa-recovery'; root.innerHTML = recoveryCodesPage(); return;
+  }
+  if (state.account && ['login', 'activate', 'mfa'].includes(requested)) {
     if (location.hash !== '#/dashboard') location.hash = '#/dashboard';
     state.route = 'dashboard';
   } else state.route = requested;
   if (state.route === 'login') { root.innerHTML = loginPage(); return; }
   if (state.route === 'activate') { root.innerHTML = activatePage(); return; }
+  if (state.route === 'mfa-recovery') { location.hash = '#/dashboard'; state.route = 'dashboard'; }
   if (state.route === 'host' && isMobileBrowser()) {
     root.innerHTML = '<main class="auth-state" role="status"><section class="panel panel-pad"><h1>มือถือใช้เป็นผู้ควบคุมเท่านั้น</h1><p>เปิดเซสชันจากมือถือเพื่อดูหรือควบคุมคอมพิวเตอร์ที่ได้รับอนุญาต การแชร์หน้าจอต้องเริ่มจากคอมพิวเตอร์</p><a class="text-link" href="#/dashboard">กลับไปแดชบอร์ด</a></section></main>';
     return;
@@ -244,6 +253,9 @@ function settingsPage() {
     '<div class="panel panel-pad"><div class="panel-title"><div><h2>บัญชีและความปลอดภัย</h2><p>สิทธิ์ของเซสชันปัจจุบัน</p></div>' + icon('shield', 20) + '</div>' +
     '<div class="detail-row"><span>บัญชี</span><strong>' + e(state.account?.email || '') + '</strong></div>' +
     '<div class="detail-row"><span>บทบาท</span><strong>' + role + '</strong></div>' +
+    '<div class="detail-row"><span>การยืนยันตัวตนหลายขั้นตอน</span><strong>' + (state.account?.mfaEnabled ? 'เปิดใช้งาน · TOTP' : 'ต้องตั้งค่าก่อนใช้งาน') + '</strong></div>' +
+    '<div class="detail-row"><span>รหัสกู้คืนที่เหลือ</span><strong>' + Number(state.account?.recoveryCodesRemaining || 0) + '</strong></div>' +
+    '<div class="mt-16">' + btn(icon('shield', 15) + ' สร้างรหัสกู้คืนใหม่', 'rotate-mfa-codes', 'btn w-full') + btn('ตั้งค่า MFA ใหม่', 'reset-mfa', 'btn w-full mt-8') + '</div>' +
     '<div class="detail-row"><span>การแชร์ภาพ</span><strong>ต้องได้รับอนุญาตจาก Host</strong></div>' +
     '<div class="detail-row"><span>ควบคุมเมาส์/คีย์บอร์ด Windows</span><strong>ต้องใช้ Agent</strong></div>' +
     (state.account?.role === 'admin' ? '<div class="mt-20">' + btn(icon('shield', 15) + ' จัดการบัญชีครู', 'go-users', 'btn btn-primary w-full') + '</div>' : '') +
@@ -289,6 +301,27 @@ function loginPage() {
     '<p class="auth-security">' + icon('shield', 14) + ' การแชร์ภาพต้องได้รับอนุญาตจาก Host ทุกครั้ง</p>');
 }
 
+function mfaPage() {
+  const setup = !!state.mfaPending?.setupRequired;
+  const account = state.mfaSetup?.email || state.activationEmail || '';
+  const content = setup
+    ? '<div class="eyebrow">MULTI-FACTOR SETUP</div><h2>ตั้งค่า MFA</h2><p>เปิดแอป Authenticator แล้วเพิ่มบัญชี KRABAK ด้วยการป้อนรหัสตั้งค่าด้านล่าง จากนั้นกรอกรหัส 6 หลักเพื่อยืนยัน</p>' +
+      (state.mfaSetup?.secret ? '<div class="field"><label>บัญชี</label><input readonly value="' + e(account) + '"/><small>ผู้ออก: KRABAK · ใช้รหัสนี้ในแอป Authenticator</small></div><div class="field"><label for="mfa-secret">รหัสตั้งค่า</label><input id="mfa-secret" readonly value="' + e(state.mfaSetup.secret) + '"/><button type="button" class="btn btn-xs mt-8" data-act="copy-mfa-secret">คัดลอกรหัสตั้งค่า</button><small>เก็บเป็นความลับ อย่าส่งให้ผู้อื่น</small></div>' : '<div class="auth-message" role="status">กำลังเตรียมรหัสตั้งค่า…</div>')
+    : '<div class="eyebrow">MULTI-FACTOR SIGN IN</div><h2>ยืนยันตัวตน</h2><p>กรอกรหัสจากแอป Authenticator หรือใช้รหัสกู้คืนที่ยังไม่เคยใช้</p>';
+  return authFrame(content + '<form id="mfa-form" class="auth-form"><div class="field"><label for="mfa-code">' + (setup ? 'รหัส 6 หลักจาก Authenticator' : 'รหัส Authenticator หรือรหัสกู้คืน') + '</label><input required id="mfa-code" name="code" type="text" inputmode="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="32" placeholder="กรอกรหัส"/></div>' +
+    '<div id="mfa-error" class="auth-message error" role="alert" aria-live="polite">' + e(state.apiError) + '</div>' +
+    '<button class="btn btn-primary w-full mt-16" type="submit" ' + (state.authBusy || (setup && !state.mfaSetup?.secret) ? 'disabled' : '') + '>' + (state.authBusy ? '<span class="spinner"></span> กำลังตรวจสอบ…' : setup ? 'เปิดใช้ MFA และเข้าสู่ระบบ' : 'ยืนยันและเข้าสู่ระบบ') + '</button>' +
+    '<button type="button" class="btn w-full mt-8" data-act="cancel-mfa">ยกเลิกและกลับไปเข้าสู่ระบบ</button></form>');
+}
+
+function recoveryCodesPage() {
+  const codes = Array.isArray(state.mfaRecoveryCodes) ? state.mfaRecoveryCodes : [];
+  return authFrame('<div class="eyebrow">SAVE RECOVERY CODES</div><h2>บันทึกรหัสกู้คืน</h2><p>รหัสเหล่านี้แสดงครั้งเดียว ใช้เข้าสู่ระบบได้ครั้งละหนึ่งรหัส และใครที่มีรหัสจะเข้าสู่บัญชีนี้ได้</p>' +
+    '<div class="agent-code-box recovery-code-list"><code translate="no">' + codes.map(e).join('\n') + '</code></div>' +
+    '<div class="info-banner warning">เก็บรหัสไว้ในที่ปลอดภัย แยกจากรหัสผ่าน แล้วกดต่อเมื่อบันทึกเรียบร้อย</div>' +
+    '<div class="modal-actions">' + btn('คัดลอกรหัสทั้งหมด', 'copy-recovery-codes', 'btn') + btn('บันทึกแล้ว ไปต่อ', 'mfa-recovery-continue', 'btn btn-primary') + '</div>');
+}
+
 function activatePage() {
   return authFrame('<div class="eyebrow">ACCOUNT ACTIVATION</div><h2>เปิดใช้บัญชีครู</h2><p>กรอกอีเมลและรหัสเปิดใช้ครั้งเดียวที่ได้รับจากผู้ดูแล</p>' +
     '<form id="activate-form" class="auth-form"><div class="field"><label for="activation-email">อีเมล</label><input required type="email" id="activation-email" name="email" autocomplete="username" spellcheck="false" placeholder="name@school.ac.th…" value="' + e(state.activationEmail) + '"/></div>' +
@@ -306,7 +339,7 @@ function activatePage() {
 
 function usersPage() {
   const rows = state.users.length ? state.users.map(user => '<article class="account-row"><div class="account-identity"><div class="avatar">' + icon('shield', 17) +
-    '</div><div><strong>' + e(user.email) + '</strong><small>ครู · เพิ่มเมื่อ ' + e(new Date(user.createdAt).toLocaleDateString('th-TH')) + '</small></div></div>' +
+    '</div><div><strong>' + e(user.email) + '</strong><small>ครู · เพิ่มเมื่อ ' + e(new Date(user.createdAt).toLocaleDateString('th-TH')) + ' · MFA ' + (user.mfaEnabled ? 'ตั้งค่าแล้ว' : 'รอตั้งค่า') + '</small></div></div>' +
     '<span class="pill ' + (user.status === 'active' ? 'success' : user.status === 'disabled' ? 'warning' : '') + '">' +
     (user.status === 'active' ? 'ใช้งานได้' : user.status === 'disabled' ? 'ปิดบัญชี' : 'รอเปิดใช้') + '</span><div class="account-actions">' +
     (user.status === 'active' || user.status === 'pending' ? btn('ออกโค้ดใหม่', 'reissue-activation', 'btn btn-xs', 'data-user-id="' + e(user.id) + '"') : '') +
@@ -333,7 +366,7 @@ function modalHtml() {
   if (m.type === 'agent-enrollment') {
     title = 'ลงทะเบียน Windows Agent';
     body = '<p>รหัสนี้ผูกกับบัญชี <strong>' + e(state.account?.email || '') + '</strong> ใช้ครั้งเดียว หมดอายุใน 10 นาที และต้องกรอกใน KRABAK Windows Agent บนเครื่องปลายทาง</p>' +
-      '<div class="agent-code-box"><code translate="no">' + e(m.code) + '</code></div><div class="info-banner">Agent รุ่นทดลองยังไม่มีลายเซ็น และระบบยังไม่มี MFA · ใช้ทดสอบบนเครื่องส่วนตัวเท่านั้น อย่าเปิด trusted access บนเครื่องโรงเรียน เว็บจะควบคุม Windows จริงได้หลังติดตั้งและลงทะเบียน Agent บนเครื่องนั้น</div>' +
+      '<div class="agent-code-box"><code translate="no">' + e(m.code) + '</code></div><div class="info-banner">บัญชีผู้ใช้ต้องยืนยัน MFA ก่อนใช้งาน Agent · ขณะนี้ยังไม่มี signed production Agent ให้ดาวน์โหลด โปรดใช้เฉพาะไฟล์ที่ลงลายเซ็นด้วยใบรับรองที่ Windows เชื่อถือแล้ว</div>' +
       '<div class="modal-actions">' + btn('คัดลอกรหัส', 'copy-agent-code', 'btn btn-primary') + btn('ปิด', 'close-modal') + '</div>';
   } else if (m.type === 'connect') {
     title = 'เชื่อมต่อด้วยรหัสจับคู่';
@@ -368,6 +401,16 @@ function modalHtml() {
     title = 'คืนค่าการตั้งค่า';
     body = '<p>คืนค่าธีมและตัวเลือกในเบราว์เซอร์นี้ โดยไม่เปลี่ยนข้อมูลบัญชีหรือเซิร์ฟเวอร์</p><div class="modal-actions">' +
       btn('ยกเลิก', 'close-modal') + btn('คืนค่าเริ่มต้น', 'confirm-reset', 'btn btn-danger') + '</div>';
+  } else if (m.type === 'mfa-rotate') {
+    title = 'สร้างรหัสกู้คืน MFA ใหม่';
+    body = '<p>การสร้างชุดใหม่จะทำให้รหัสกู้คืนชุดเดิมใช้ไม่ได้ทั้งหมด ยืนยันด้วยรหัส 6 หลักจาก Authenticator</p>' +
+      '<form id="mfa-rotate-form"><div class="field"><label for="mfa-rotate-code">รหัส Authenticator</label><input id="mfa-rotate-code" name="code" required inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000"/></div>' +
+      '<div id="mfa-rotate-error" class="auth-message error" role="alert" aria-live="polite"></div><div class="modal-actions">' + btn('ยกเลิก', 'close-modal') + '<button type="submit" class="btn btn-primary">สร้างรหัสใหม่</button></div></form>';
+  } else if (m.type === 'mfa-reset') {
+    title = 'ตั้งค่า MFA ใหม่';
+    body = '<p>กรอกรหัส TOTP ปัจจุบันหรือ recovery code ที่ยังไม่เคยใช้ ระบบจะออกจากระบบทุกอุปกรณ์และบังคับตั้ง MFA ใหม่เมื่อเข้าสู่ระบบครั้งถัดไป</p>' +
+      '<form id="mfa-reset-form"><div class="field"><label for="mfa-reset-code">รหัส MFA หรือ recovery code</label><input id="mfa-reset-code" name="code" required autocomplete="one-time-code" autocapitalize="characters" maxlength="32" placeholder="กรอกรหัส"/></div>' +
+      '<div id="mfa-reset-error" class="auth-message error" role="alert" aria-live="polite"></div><div class="modal-actions">' + btn('ยกเลิก', 'close-modal') + '<button type="submit" class="btn btn-danger">รีเซ็ต MFA</button></div></form>';
   } else if (m.type === 'host-consent') {
     title = 'อนุญาตให้แชร์หน้าจอหรือไม่';
     body = '<div class="host-consent-body"><div class="consent-icon">' + icon('monitor', 28) + '</div><p><strong>' +
@@ -397,15 +440,20 @@ async function checkBackend() {
     state.initialised = !!status.initialised;
     state.rtcConfig = status.rtcConfig || null;
     state.account = status.user || null;
+    state.mfaPending = status.mfaPending || null;
   } catch {
     state.backend = false;
     state.initialised = false;
     state.account = null;
+    state.mfaPending = null;
   }
   state.appReady = true;
   if (state.account) {
     location.hash = '#/dashboard';
     await loadAccountData();
+  } else if (state.mfaPending) {
+    location.hash = '#/mfa';
+    if (state.mfaPending.setupRequired) await loadMfaSetup();
   } else {
     state.apiError = state.backend ? '' : 'เชื่อมต่อ Backend ไม่ได้ โปรดตรวจสอบเครือข่ายหรือแจ้งผู้ดูแลระบบ';
     location.hash = '#/login';
@@ -424,16 +472,69 @@ async function login(ev) {
   if (submit) submit.disabled = true;
   try {
     const data = await api('/login', { method: 'POST', body: JSON.stringify({ email, password: passwordInput?.value }) });
-    state.account = data.user; state.authNotice = ''; state.authBusy = false;
+    state.authNotice = ''; state.authBusy = false;
     if (passwordInput) passwordInput.value = '';
-    location.hash = '#/dashboard';
-    await loadAccountData();
-    render(); toast('เข้าสู่ระบบแล้ว');
+    if (data.mfaRequired) {
+      state.account = null; state.mfaPending = { setupRequired: !!data.mfaSetupRequired }; state.mfaSetup = null; state.mfaRecoveryCodes = null;
+      state.apiError = ''; location.hash = '#/mfa';
+      if (state.mfaPending.setupRequired) await loadMfaSetup();
+      render();
+    } else {
+      state.account = data.user; location.hash = '#/dashboard';
+      await loadAccountData(); render(); toast('เข้าสู่ระบบแล้ว');
+    }
   } catch (error) {
     state.apiError = error.message; state.authBusy = false;
     if (message) message.textContent = error.message;
     if (submit) submit.disabled = false;
   }
+}
+
+async function loadMfaSetup() {
+  try { state.mfaSetup = await api('/mfa/setup', { method: 'POST', body: '{}' }); state.apiError = ''; }
+  catch (error) { state.mfaSetup = null; state.apiError = error.message; }
+}
+
+async function verifyMfa(ev) {
+  ev.preventDefault();
+  if (state.authBusy) return;
+  const form = ev.target; const submit = form.querySelector('[type="submit"]'); const message = document.getElementById('mfa-error');
+  state.authBusy = true; state.apiError = ''; if (message) message.textContent = ''; if (submit) submit.disabled = true;
+  try {
+    const code = form.elements.code.value.trim();
+    const data = await api('/mfa/verify', { method: 'POST', body: JSON.stringify({ code }) });
+    state.account = data.user; state.mfaPending = null; state.mfaSetup = null; state.authBusy = false; state.apiError = '';
+    if (Array.isArray(data.recoveryCodes)) { state.mfaRecoveryCodes = data.recoveryCodes; location.hash = '#/mfa-recovery'; render(); }
+    else { state.mfaRecoveryCodes = null; location.hash = '#/dashboard'; await loadAccountData(); render(); toast('ยืนยัน MFA และเข้าสู่ระบบแล้ว'); }
+  } catch (error) {
+    state.apiError = error.message; state.authBusy = false; if (message) message.textContent = error.message; if (submit) submit.disabled = false;
+  }
+}
+
+async function cancelMfa() {
+  try { await api('/mfa/cancel', { method: 'POST', body: '{}' }); } catch {}
+  state.account = null; state.mfaPending = null; state.mfaSetup = null; state.mfaRecoveryCodes = null; state.apiError = ''; state.authBusy = false;
+  location.hash = '#/login'; render();
+}
+
+async function rotateMfaRecoveryCodes(ev) {
+  ev.preventDefault();
+  const form = ev.target; const submit = form.querySelector('[type="submit"]'); const message = document.getElementById('mfa-rotate-error');
+  if (submit) submit.disabled = true; if (message) message.textContent = '';
+  try {
+    const result = await api('/mfa/recovery-codes', { method: 'POST', body: JSON.stringify({ code: form.elements.code.value.trim() }) });
+    state.account.recoveryCodesRemaining = result.recoveryCodes.length; state.mfaRecoveryCodes = result.recoveryCodes; state.modal = null; location.hash = '#/mfa-recovery'; render();
+  } catch (error) { if (message) message.textContent = error.message; if (submit) submit.disabled = false; }
+}
+
+async function resetMfaEnrollment(ev) {
+  ev.preventDefault();
+  const form = ev.target; const submit = form.querySelector('[type="submit"]'); const message = document.getElementById('mfa-reset-error');
+  if (submit) submit.disabled = true; if (message) message.textContent = '';
+  try {
+    await api('/mfa/reset', { method: 'POST', body: JSON.stringify({ code: form.elements.code.value.trim() }) });
+    state.modal = null; await logout(); toast('MFA ถูกรีเซ็ตแล้ว เข้าสู่ระบบอีกครั้งเพื่อตั้งค่า Authenticator ใหม่');
+  } catch (error) { if (message) message.textContent = error.message; if (submit) submit.disabled = false; }
 }
 
 async function activateAccount(ev) {
@@ -504,6 +605,7 @@ async function logout() {
   if (state.ws) { try { state.ws.close(); } catch {} }
   closePeer(); stopStream();
   state.account = null; state.devices = []; state.events = []; state.users = []; state.activationIssued = null; state.resourceError = '';
+  state.mfaPending = null; state.mfaSetup = null; state.mfaRecoveryCodes = null;
   state.liveSession = null; state.ws = null; state.appReady = true; state.authNotice = '';
   state.hostToken = null; state.hostCode = null; state.hostRequests = []; state.activeSessionId = null; state.modal = null;
   location.hash = '#/login'; render(); toast('ออกจากระบบแล้ว');
@@ -602,6 +704,12 @@ async function onAction(act,el){switch(act){
  case 'go-host':navigate('host');break;
  case 'go-devices':if(state.liveSession)endLive();else navigate('devices');break;
  case 'go-users':navigate('users');break;
+ case 'rotate-mfa-codes':showModal('mfa-rotate');break;
+ case 'reset-mfa':showModal('mfa-reset');break;
+ case 'copy-mfa-secret':try{await navigator.clipboard.writeText(state.mfaSetup?.secret||'');toast('คัดลอกรหัสตั้งค่า MFA แล้ว');}catch{toast('เบราว์เซอร์ไม่อนุญาตคลิปบอร์ด','err');}break;
+ case 'cancel-mfa':await cancelMfa();break;
+ case 'copy-recovery-codes':try{await navigator.clipboard.writeText((state.mfaRecoveryCodes||[]).join('\n'));toast('คัดลอกรหัสกู้คืนแล้ว');}catch{toast('เบราว์เซอร์ไม่อนุญาตคลิปบอร์ด','err');}break;
+ case 'mfa-recovery-continue':state.mfaRecoveryCodes=null;location.hash='#/dashboard';await loadAccountData();render();break;
   case 'connect-code':showModal('connect');break;
   case 'enroll-agent':await createAgentEnrollment();break;
   case 'copy-agent-code':try{await navigator.clipboard.writeText(state.agentEnrollment?.code||'');toast('คัดลอกรหัสลงทะเบียน Agent แล้ว');}catch{toast('เบราว์เซอร์ไม่อนุญาตคลิปบอร์ด','err');}break;
@@ -652,7 +760,7 @@ document.addEventListener('keydown',ev=>{if(!state.liveSession?.agent||!ev.targe
 document.addEventListener('keyup',ev=>{const key=state.agentKeys.get(ev.code);if(!key)return;state.agentKeys.delete(ev.code);sendAgentInput({kind:'key',virtualKey:key,down:false});});
 function releaseAgentInput(){for(const virtualKey of state.agentKeys.values())sendAgentInput({kind:'key',virtualKey,down:false});state.agentKeys.clear();for(const button of state.agentButtons)sendAgentInput({kind:'button',button,down:false,...state.agentLastPoint});state.agentButtons.clear();}
 window.addEventListener('blur',releaseAgentInput);
-document.addEventListener('submit',async ev=>{if(ev.target.matches('#login-form')){await login(ev);return}if(ev.target.matches('#activate-form')){await activateAccount(ev);return}if(ev.target.matches('#create-user-form')){await createTeacherAccount(ev);return}if(ev.target.matches('#pair-form')){await requestSession(ev);return}if(ev.target.matches('#chat-form')){ev.preventDefault();const input=document.getElementById('chat-input');const val=input?.value;input.value='';sendChat(val);return}if(ev.target.matches('#host-chat-form')){ev.preventDefault();const input=document.getElementById('host-chat-input');const val=input?.value;input.value='';sendChat(val);return}if(ev.target.matches('#clipboard-form')){ev.preventDefault();sendClipboard(document.getElementById('clipboard-text')?.value||'');return}});
+document.addEventListener('submit',async ev=>{if(ev.target.matches('#login-form')){await login(ev);return}if(ev.target.matches('#mfa-form')){await verifyMfa(ev);return}if(ev.target.matches('#mfa-rotate-form')){await rotateMfaRecoveryCodes(ev);return}if(ev.target.matches('#mfa-reset-form')){await resetMfaEnrollment(ev);return}if(ev.target.matches('#activate-form')){await activateAccount(ev);return}if(ev.target.matches('#create-user-form')){await createTeacherAccount(ev);return}if(ev.target.matches('#pair-form')){await requestSession(ev);return}if(ev.target.matches('#chat-form')){ev.preventDefault();const input=document.getElementById('chat-input');const val=input?.value;input.value='';sendChat(val);return}if(ev.target.matches('#host-chat-form')){ev.preventDefault();const input=document.getElementById('host-chat-input');const val=input?.value;input.value='';sendChat(val);return}if(ev.target.matches('#clipboard-form')){ev.preventDefault();sendClipboard(document.getElementById('clipboard-text')?.value||'');return}});
 document.addEventListener('change',ev=>{const t=ev.target;if(t.id==='device-filter'){state.filter=t.value;render();}else if(t.dataset.setting){state.settings[t.dataset.setting]=t.value;localStorage.setItem('krabak-prefs',JSON.stringify(state.settings));render();toast('บันทึกการตั้งค่าแล้ว');}else if(t.id==='remote-file'||t.id==='host-file'){const file=t.files?.[0];if(file)sendFile(file);}});
 document.addEventListener('input',ev=>{if(ev.target.id==='device-search'){let pos=ev.target.selectionStart;state.search=ev.target.value;render();const inp=document.getElementById('device-search');inp?.focus();inp?.setSelectionRange(pos,pos);}if(ev.target.id==='zoom-range'){const small=ev.target.parentElement?.querySelector('small');if(small)small.textContent=ev.target.value+'%';}});
 document.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&state.modal&&state.modal.type!=='host-consent'){if(state.modal.type==='agent-enrollment')state.agentEnrollment=null;state.modal=null;render();}if((ev.ctrlKey||ev.metaKey)&&ev.key==='k'&&state.route==='devices'){ev.preventDefault();document.getElementById('device-search')?.focus();}});

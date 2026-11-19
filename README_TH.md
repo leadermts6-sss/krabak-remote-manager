@@ -6,18 +6,21 @@ KRABAK Remote Manager เป็นเว็บแอป/PWA สำหรับ�
 
 - ผู้ดูแลสร้างบัญชีครูด้วยอีเมลและส่งรหัสเปิดใช้ครั้งเดียว (อายุ 24 ชั่วโมง); ครูตั้งรหัสผ่านเองในหน้าล็อกอิน
 - รหัสผ่านครูต้องมีตัวอักษรภาษาอังกฤษและตัวเลข ความยาว 12–128 ตัว
+- ทุกบัญชีต้องตั้งค่า TOTP MFA ในการเข้าสู่ระบบครั้งแรก; การยืนยันรหัสผ่านอย่างเดียวไม่เปิด session
+- ระบบออก recovery code ใช้ครั้งเดียว เก็บเป็น hash และให้เปลี่ยนชุดใหม่ได้หลังยืนยัน TOTP
+- ผู้ใช้ตั้งค่า MFA ใหม่ได้เมื่อยืนยัน TOTP หรือ recovery code; การรีเซ็ตจะยกเลิก session ที่เปิดอยู่
 - ผู้ดูแลเห็น Host และประวัติทั้งหมด; ครูเห็น Host และประวัติตามบัญชีของตัวเอง
 - Browser Host ลงชื่อเข้าใช้และสร้างรหัสจับคู่ชั่วคราว ผู้ดูหรือครูส่งคำขอเชื่อมต่อได้
 - Browser Host ต้องอนุญาตคำขอและเลือกหน้าต่าง จอ หรือแท็บผ่านหน้าต่างของเบราว์เซอร์
-- Windows Agent รุ่นทดลองมี source, API และ build ผ่าน; โค้ดส่งภาพจากจอที่เลือกและรับเมาส์/คีย์บอร์ด Windows จริงผ่าน allowlist แต่ยังไม่ได้ทดสอบ session จริงกับเครื่องเป้าหมาย
+- Windows Agent มี source/API สำหรับแชร์ภาพและส่งเมาส์/คีย์บอร์ด Windows จริงผ่าน allowlist; การแจกจ่าย production ยังรอใบรับรอง code-signing ที่ Windows เชื่อถือ
 - บัญชีเดียวกันเริ่มเซสชันตรงได้เมื่อผู้ใช้เปิด “เชื่อถือบัญชีนี้” บน Agent; คำขอจากบัญชีอื่นยังต้องกดยอมรับบนเครื่อง Windows
 - เมื่อคำขอมาถึง Host จะแสดงกล่องอนุญาตกลางหน้าจอ แม้กำลังใช้งานหน้าอื่นในแอป
 - สตรีมภาพใช้ WebRTC; แชตและ signaling ใช้ WebSocket; ไฟล์ส่งผ่าน DataChannel ขนาดไม่เกิน 8 MB
 - Host หยุดการแชร์ได้จากหน้าเว็บหรือจาก Chrome/Edge
 
-Browser Share ยังคงเป็น view-only และไม่สามารถข้าม browser picker ได้ การควบคุม Windows จริงทำได้เฉพาะกับ Windows Agent ที่ติดตั้งและลงทะเบียนบนเครื่องนั้นแล้ว Agent รุ่นนี้เป็นรุ่นทดลองที่ยังไม่ลงนาม; ห้ามนำไปใช้กับเครื่องโรงเรียนจริงจนกว่าจะมี code-signing, MFA, security review และการทดสอบยอมรับบนเครื่องเป้าหมาย
+Browser Share ยังคงเป็น view-only และไม่สามารถข้าม browser picker ได้ การควบคุม Windows จริงทำได้เฉพาะกับ Windows Agent ที่ติดตั้งและลงทะเบียนบนเครื่องนั้นแล้ว เว็บไซต์บังคับ MFA แล้ว แต่ยังไม่มี signed production Agent ให้ดาวน์โหลดจนกว่าจะมีใบรับรอง code-signing ที่ Windows เชื่อถือและ workflow ตรวจ signature ผ่าน
 
-### Windows Agent รุ่นทดลอง
+### Windows Agent
 
 - โค้ดอยู่ใน `agent/windows/` และ build ได้ด้วย .NET 10 SDK บน Windows:
 
@@ -25,8 +28,8 @@ Browser Share ยังคงเป็น view-only และไม่สาม�
   dotnet publish agent/windows/KrabakRemoteAgent.csproj --configuration Release --runtime win-x64 --self-contained true --output artifacts/krabak-agent
   ```
 
-- Workflow `Windows Agent development build` สร้าง artifact แบบ unsigned แยกจาก release เว็บ เก็บไว้ 7 วันใน GitHub Actions
-- ผู้ใช้ต้องดาวน์โหลดจาก Actions ใน repository ส่วนตัว ตรวจแหล่งที่มา แล้วเปิด Agent เอง; ยังไม่มี installer, code signature, auto-start หรือการติดตั้งอัตโนมัติ
+- Workflow compile unsigned development build ไว้ตรวจ CI เท่านั้นและไม่เผยแพร่ให้ดาวน์โหลด; signed production release จะทำจาก stable version tag หลังตรวจ signature ผ่านเท่านั้น
+- ยังไม่มี signed Agent ให้ติดตั้ง; production release ต้องตั้งค่า Microsoft Artifact Signing แบบ Public Trust และ GitHub OIDC ก่อน และไม่มี installer หรือ auto-start
 - หลังลงทะเบียนอุปกรณ์แล้ว หน้ารายการจะเห็นสถานะออนไลน์และปุ่ม “ควบคุม Windows”; ก่อนติดตั้ง Agent เว็บจะแจ้งว่าเครื่องยังต้องใช้ Agent เพราะยังไม่มี process บน Windows ที่ส่ง input จริงได้
 - ใช้ได้เฉพาะบัญชี Windows ปัจจุบันและจอที่เลือก; ไม่รองรับหน้าต่าง UAC/secure desktop, การควบคุมโปรแกรมที่ยกระดับสิทธิ์, native touchscreen, หลายจอพร้อมกัน, clipboard หรือ file transfer
 
@@ -68,7 +71,7 @@ GitHub Actions ตรวจ dependency, ทดสอบ backend และ build 
 
 - Session, Host ที่ออนไลน์ และ audit ปัจจุบันเก็บในหน่วยความจำของ Node; restart ทำให้ session หาย
 - STUN อย่างเดียวอาจเชื่อมต่อไม่ได้เมื่อ NAT เข้มงวด; อาจต้องตั้ง coturn พร้อม ephemeral credentials
-- Windows Agent มี source และ CI development artifact แล้ว แต่ยัง unsigned, ยังไม่ติดตั้งบนเครื่องผู้ใช้, ไม่มี MFA และยังไม่ผ่าน security review; ยังไม่พร้อมใช้จริงกับข้อมูล/เครื่องโรงเรียน
+- เว็บไซต์บังคับใช้ TOTP MFA แล้ว แต่ยังไม่มี signed production Agent release; workflow จะเผยแพร่หลังตั้งค่า Artifact Signing และตรวจ Authenticode ผ่านเท่านั้น
 - Agent token ถูกเก็บด้วย DPAPI ของบัญชี Windows ปัจจุบัน; การถอนอุปกรณ์ทำผ่านหน้าอุปกรณ์หรือใน Agent
 - Browser capture ต้องมีกดอนุญาตและเลือกแหล่งแชร์โดยผู้ใช้บน Host ทุกครั้ง
 - การทดสอบ UI ข้ามเครือข่ายต้องทำจาก Chrome/Edge สองเครื่องที่ผู้ใช้ควบคุมและยินยอม

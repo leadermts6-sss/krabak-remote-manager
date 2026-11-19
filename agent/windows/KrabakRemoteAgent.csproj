@@ -7,5 +7,9 @@
     <Nullable>enable</Nullable>
     <AssemblyName>KRABAK.RemoteAgent</AssemblyName>
     <RootNamespace>KRABAK.RemoteAgent</RootNamespace>
+    <AgentChannel Condition="'$(AgentChannel)' == ''">Development</AgentChannel>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(AgentChannel)' == 'Production'">
+    <DefineConstants>$(DefineConstants);AGENT_PRODUCTION</DefineConstants>
   </PropertyGroup>
 </Project>

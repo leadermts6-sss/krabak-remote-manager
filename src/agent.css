@@ -61,6 +61,19 @@
   user-select: all;
 }
 
+.recovery-code-list {
+  text-align: left;
+  max-height: 42vh;
+  overflow: auto;
+}
+
+.recovery-code-list code {
+  display: block;
+  white-space: pre-wrap;
+  line-height: 1.9;
+  letter-spacing: 0.06em;
+}
+
 @media (max-width: 740px) {
   .agent-screen {
     max-height: calc(100vh - 300px);

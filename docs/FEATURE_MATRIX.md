@@ -2,7 +2,8 @@
 
 | ฟีเจอร์ | สถานะปัจจุบัน | ข้อจำกัด / หมายเหตุ |
 |---|---|---|
-| เข้าระบบ Admin/Teacher | ทำงาน | แยกบทบาทและจำกัดข้อมูลตามบัญชี |
+| เข้าระบบ Admin/Teacher + MFA | ทำงาน | รหัสผ่านตามด้วย TOTP; บัญชีเดิมถูกบังคับตั้ง MFA ในการเข้าสู่ระบบถัดไป |
+| รหัสกู้คืน MFA | ทำงาน | 10 รหัสใช้ครั้งเดียว; จัดเก็บเป็น hash; หมุนชุดใหม่หลังยืนยัน TOTP |
 | สร้างบัญชีครู | ทำงาน | Admin ออก activation code ใช้ครั้งเดียว อายุ 24 ชั่วโมง |
 | ตั้งรหัสผ่านครู | ทำงาน | A–Z/a–z และ 0–9 ต้องมีทั้งสองชนิด 12–128 ตัว |
 | ออกจากระบบ | ทำงาน | ปุ่มแสดงที่แถบบนและหน้า Host |
@@ -10,7 +11,7 @@
 | ขอเชื่อมด้วยรหัส | ทำงาน | รหัสชั่วคราว ใช้ได้ครั้งเดียว |
 | อนุญาต Host | ทำงาน | กล่องยืนยันกลางหน้าจอ; Host ต้องกดอนุญาตและเลือก source ใน Browser picker |
 | ดูภาพ | ทำงาน | WebRTC ผ่าน STUN; NAT บางแบบต้องมี TURN |
-| Windows Agent | รุ่นทดลอง / ยัง unsigned | Source และ local x64 build ผ่าน; ยังไม่ทดสอบ session จริงกับเครื่องเป้าหมาย; ต้องติดตั้งและลงทะเบียนก่อน |
+| Windows Agent | Source และ CI พร้อม; production signing pending | build จาก branch ยัง unsigned/development; ต้องติดตั้งและลงทะเบียนบนเครื่องเป้าหมายก่อน |
 | ควบคุมเมาส์/คีย์บอร์ด Windows | มี implementation; ยังไม่ยืนยัน E2E | Agent ส่ง input จริงผ่าน allowlist; ใช้บัญชี Windows ปัจจุบัน; อาจควบคุม secure/UAC desktop หรือโปรแกรมที่ยกระดับสิทธิ์ไม่ได้ |
 | อนุมัติเซสชัน | ทำงานตามนโยบาย Agent | บัญชีเดียวกันเชื่อมตรงได้เมื่อเลือก trust บน Agent และเปิด server flag หลัง MFA/security review; ค่าเริ่มต้นให้ทุก session รอการอนุญาตจาก Windows |
 | สลับ/แสดงหลายจอจริง | จำกัด | Host เลือก source ได้ทีละรายการผ่าน Browser picker |
@@ -20,4 +21,4 @@
 | PWA | ทำงาน | ติดตั้งผ่าน Chrome/Edge หลังเปิด HTTPS |
 | Auto Deploy | ทำงาน | Push `main` หลังผ่าน test/build แล้ว GitHub Actions deploy อัตโนมัติ |
 
-**Browser Share เป็น view-only** การควบคุม Windows จริงมีเฉพาะเครื่องที่ติดตั้งและลงทะเบียน Windows Agent แล้ว รุ่น Agent ปัจจุบันยังไม่ลงนามและไม่พร้อมใช้งาน production จนกว่าจะเพิ่ม MFA, security review และ code-signing
+**Browser Share เป็น view-only** การควบคุม Windows จริงมีเฉพาะเครื่องที่ติดตั้งและลงทะเบียน Windows Agent แล้ว เว็บไซต์บังคับ MFA แล้ว; Agent ยังไม่มี signed production release จนกว่าจะมี certificate จาก CA ที่ Windows เชื่อถือและ workflow ตรวจ signature ผ่าน รวมถึงต้องทำ security review

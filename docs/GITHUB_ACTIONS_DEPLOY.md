@@ -25,7 +25,7 @@ The app environment (`/etc/krabak-remote/remote.env`) and persistent data (`/var
 
 ## Windows Agent development artifact
 
-`.github/workflows/windows-agent-build.yml` independently builds `agent/windows/` on Windows and publishes `KRABAK-Agent-unsigned-development` for 7 days. This artifact is unsigned, intended only for controlled development evaluation, and is not added to the website release archive. The production receiver allowlist remains `dist/`, `server/`, and `package.json`.
+`.github/workflows/windows-agent-build.yml` compiles `agent/windows/` on Windows for CI checks but does not publish unsigned binaries. Stable version tags run source checks and a signed release job; only an Authenticode-verified binary is published. The production receiver allowlist remains `dist/`, `server/`, and `package.json`.
 
 The current Node/PWA deployment can expose Agent enrollment and relay endpoints, but that does not install the Agent on any Windows computer. The website correctly continues to report that a target requires the Agent until an Agent is installed and online. Do not use trusted same-account unattended sessions on production accounts until MFA and security review are complete; do not distribute an unsigned executable to school computers.
 
