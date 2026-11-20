@@ -2,7 +2,7 @@
 
 ## Current status
 
-KRABAK Windows Agent v0.1.0 is unsigned. The project does not currently have an active SignPath subscription or a SignPath Foundation certificate. The application has not been submitted yet. No signature is claimed for the released executable.
+KRABAK Windows Agent v0.1.0 is unsigned. The project does not currently have an active SignPath subscription or a SignPath Foundation certificate. A SignPath Foundation application was submitted on 2026-11-20 and is awaiting an eligibility decision. No signature is claimed for the released executable.
 
 The attribution required if a SignPath Foundation subscription is approved is:
 
